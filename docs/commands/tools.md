@@ -191,9 +191,8 @@ Results are marked `read`, `write`, or `destroy`, from Composio's own hints. A
 
 ## `px0 tools call`
 
-Call one tool with one set of arguments and look at what comes back. A dry run
-stubs every write, so without this the first real call a tool ever makes is
-inside a live run.
+Call one tool with one set of arguments and look at what comes back. A write
+tool asks for confirmation first, unless `--yes` is given.
 
 ### `tool` (required)
 

@@ -33,10 +33,13 @@ Every row below is a variation on the moves in this table. The constraint column
 
 One consequence is worth stating plainly. Because a scheduled run's output goes to a file or to [your inbox](commands/inbox.md) — never to a terminal nobody is watching — "post it to Slack" is never `output.target`. It is a Slack write tool the workflow calls itself. Every row below is written that way, and any of those write tools can be held for approval with `confirm:` rather than firing unattended.
 
-Check any of them before letting it act:
+Check any of them before letting it act by adding `confirm: true` to the
+workflow's frontmatter, so its writes wait for your approval instead of
+firing:
 
 ```shell
-px0 workflows run friday-pr-digest --dry-run
+px0 workflows run friday-pr-digest   # see exactly what it would send, before it sends
+px0 approvals list
 ```
 
 ## What is reachable today
@@ -282,7 +285,7 @@ These need no connector. `inputs: retrieve` and a guideline are the whole appara
 
 ## Compositions worth building as pipelines
 
-A pipeline is one job made of workflows, one level deep. That constraint suits a specific shape: several narrow collectors, then one writer that reads all of them. Building it as stages keeps each collector runnable, and debuggable with `--dry-run`, on its own.
+A pipeline is one job made of workflows, one level deep. That constraint suits a specific shape: several narrow collectors, then one writer that reads all of them. Building it as stages keeps each collector runnable and debuggable on its own.
 
 | Pipeline                | Stages                                                                | Why it is a pipeline                                                       |
 | ----------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------- |

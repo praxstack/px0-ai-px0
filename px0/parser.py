@@ -95,7 +95,6 @@ def build(handlers) -> argparse.ArgumentParser:
     wp.add_argument("--quiet", action="store_true")
     wp.add_argument("--stdin", action="store_true")
     wp.add_argument("--output", choices=["stdout", "file"])
-    wp.add_argument("--dry-run", action="store_true")
     wp.add_argument("--input", action="append", metavar="KEY=VALUE")
     wp.add_argument("--timeout", metavar="DURATION",
                     help="override the workflow's own timeout for this run, e.g. 10m")
@@ -139,8 +138,6 @@ def build(handlers) -> argparse.ArgumentParser:
                     help="workflow id; omit to pick one from a list")
     wp.add_argument("--since", metavar="AGE",
                     help="only learn from runs newer than this, e.g. 30d")
-    wp.add_argument("--dry-run", action="store_true",
-                    help="show the proposal and apply none of it")
     wp.add_argument("--show-evidence", action="store_true",
                     help="print exactly what the model would be given, and stop")
     wp.add_argument("--yes", action="store_true",
@@ -207,8 +204,6 @@ def build(handlers) -> argparse.ArgumentParser:
                     help="write the template as a new workflow, leaving this one as it is")
     wp.add_argument("--candidates", action="store_true",
                     help="print what the scan found and stop, with no model call")
-    wp.add_argument("--dry-run", action="store_true",
-                    help="show the template and write nothing")
     wp.add_argument("--yes", action="store_true", help="skip the confirmation")
     wp.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     wp.set_defaults(func=handlers.cmd_workflows_templatize)
@@ -315,8 +310,7 @@ def build(handlers) -> argparse.ArgumentParser:
     rp5.add_argument("run_id")
     rp5.add_argument("--force", action="store_true", help="SIGKILL instead of SIGTERM")
 
-    rp6 = runs_sub.add_parser("prune", help="delete logs and records past retention")
-    rp6.add_argument("--dry-run", action="store_true")
+    runs_sub.add_parser("prune", help="delete logs and records past retention")
 
     rp7 = runs_sub.add_parser("open", help="print the file a run produced")
     rp7.add_argument("run_id")
@@ -548,7 +542,6 @@ def build(handlers) -> argparse.ArgumentParser:
     yp = store_sub.add_parser("sync",
                               help="bring this store and a shared folder into line")
     yp.add_argument("dir", help="a directory both machines can see")
-    yp.add_argument("--dry-run", action="store_true", help="say what would move, and stop")
     yp.add_argument("--pull", action="store_true", help="only take changes, send none")
     yp.add_argument("--push", action="store_true", help="only send changes, take none")
     yp.add_argument("--json", action="store_true", default=argparse.SUPPRESS)

@@ -96,8 +96,7 @@ px0 then asks about anything still genuinely ambiguous, finds the tools the job 
 ### 3. Run it
 
 ```shell
-px0 workflows run friday-pr-digest --dry-run   # resolve inputs, call nothing
-px0 workflows run friday-pr-digest             # for real
+px0 workflows run friday-pr-digest
 ```
 
 The first time a workflow needs Slack or Gmail, px0 hands you a URL to approve. You only authorize the apps you actually use.
@@ -306,9 +305,9 @@ consistent with it. A complaint about how output reads becomes a guideline
 instead, which fixes every workflow that carries it rather than just this one.
 
 It will never widen what a workflow can reach on its own: a new tool still goes
-through the same confirm-and-authorize step as when you first built it. Use
-`--dry-run` to see a proposal and apply none of it, and `--show-evidence` to see
-exactly what the model was given.
+through the same confirm-and-authorize step as when you first built it. Nothing
+is applied without being shown first, and `--show-evidence` shows exactly what
+the model was given.
 
 ## Workflows somebody else can run
 

@@ -3,10 +3,9 @@
 Write tool calls that wait for a person.
 
 px0's trust model was binary: a tool either mutates something or it does not,
-and a workflow either may call it or may not. `--dry-run` stubs every write,
-which rehearses a workflow but never does the work. There was no middle — no
-way to say *draft it and ask me* — so anything that speaks in your name had to
-be handed the real capability up front, on the strength of a plan you read once.
+and a workflow either may call it or may not. There was no middle — no way to
+say *draft it and ask me* — so anything that speaks in your name had to be
+handed the real capability up front, on the strength of a plan you read once.
 
 This is that middle. A held-back call is not executed: it is written down in
 full — tool, arguments, the run that drafted it, and what that run produced —

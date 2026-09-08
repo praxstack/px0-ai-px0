@@ -45,7 +45,7 @@ px0 mcp serve --allow-runs
 | `workflows_list` | Every workflow, with its schedule and whether it is disabled | no |
 | `guidelines_list` | Every guideline file, with what each one covers | no |
 | `guideline_read` | One guideline verbatim, to follow it | no |
-| `workflow_run` | Run a workflow, optionally as a dry run | yes |
+| `workflow_run` | Run a workflow | yes |
 
 `brain_ask` and `brain_search` take an optional `kind` (`blog`, `paper`, `doc`,
 `video`, `stub`) and `k`. Nothing under the brain's private folder is ever
@@ -93,7 +93,6 @@ Everything px0 enforces still holds, moved into the server from the loop it
 replaces:
 
 - A tool outside the scope is refused, not called.
-- A write is stubbed on a dry run.
 - A held-back write is queued for [approval](approvals.md).
 - Every call lands in the run's event stream, readable with `px0 runs events`.
 

@@ -125,8 +125,6 @@ def tool_definitions(allow_runs: bool) -> list[dict]:
                 "type": "object",
                 "properties": {
                     "workflow": {"type": "string"},
-                    "dry_run": {"type": "boolean",
-                                "description": "Resolve inputs and call nothing"},
                 },
                 "required": ["workflow"],
             },
@@ -201,7 +199,6 @@ def call_tool(home, config, name: str, args: dict, allow_runs: bool) -> dict:
             if not workflow_id:
                 return _error("workflow_run needs a workflow id")
             record = runner.run(home, config, workflow_id, trigger="mcp",
-                                 dry_run=bool(args.get("dry_run")),
                                  output_override={"target": "memory"})
             return _text(record.get("output", {}).get("text") or "(no output)")
     except Exception as e:
@@ -220,8 +217,8 @@ def call_tool(home, config, name: str, args: dict, allow_runs: bool) -> dict:
 #
 # Everything px0 enforces still holds, because it is enforced here rather than
 # in the loop that was removed: a tool outside the allowlist is refused, a
-# write is stubbed on a dry run, a held-back write is queued for approval, and
-# every call lands in the run's event stream.
+# held-back write is queued for approval, and every call lands in the run's
+# event stream.
 
 
 def scope_tool_definitions(home, scope: dict) -> list[dict]:
@@ -289,12 +286,6 @@ def call_scoped(home, config, scope: dict, name: str, args: dict) -> dict:
         is_write = tools_mod.is_write(tool_id, home)
     except KeyError:
         is_write = False
-
-    if scope.get("dry_run") and is_write:
-        _append_scope_call(scope, {"tool": tool_id, "is_write": True,
-                                   "stubbed": True, "failed": False,
-                                   "args": args, "result_summary": "stubbed"})
-        return _text("stubbed: this is a dry run, so the call was not made")
 
     if is_write and tool_id in set(scope.get("confirm_tools") or []):
         approval = approvals_mod.queue(

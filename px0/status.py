@@ -68,11 +68,10 @@ def collect(home: Path, config: dict, hours: int = RECENT_HOURS) -> dict:
             "workflow": rec.get("workflow_id"),
             "outcome": rec.get("outcome", "unknown"),
             "started": rec.get("start_time"),
-            "dry_run": bool(rec.get("dry_run")),
             "attempt": rec.get("attempt"),
         }
         recent.append(entry)
-        if rec.get("outcome") == "failed" and not rec.get("dry_run"):
+        if rec.get("outcome") == "failed":
             entry = dict(entry)
             entry["error"] = str(rec.get("error") or "")[:200]
             entry["notified"] = (rec.get("notified") or {}).get("notified")

@@ -26,7 +26,7 @@ px0 runs logs <run_id> [--follow|-f]
 px0 runs rerun <run_id>
 px0 runs why <run_id>
 px0 runs cancel <run-id> [--force]
-px0 runs prune [--dry-run]
+px0 runs prune
 px0 runs open <run-id>
 px0 runs mark <run-id> [--good [NOTE] | --bad [NOTE] | --clear] [--note NOTE]
 px0 runs events <run-id> [--json]
@@ -294,15 +294,7 @@ Delete logs and records that are past retention.
   installs the daemon applies its retention settings at all.
 - Runs that called a write tool are never pruned, regardless of age.
 
-### `--dry-run`
-
-Print the retention windows and how many records they apply to, and delete
-nothing.
-
-- **Input:** flag, no value. Default off.
-
 ```shell
-px0 runs prune --dry-run
 px0 runs prune
 ```
 

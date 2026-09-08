@@ -98,7 +98,6 @@ Each takes the same arguments and returns a list of findings, so the caller is a
 | Code | Severity | What it catches |
 | ---- | -------- | --------------- |
 | `no_runs` | note | Nothing on record; says whether it is scheduled |
-| `dry_run_only` | note | Every run here was a rehearsal |
 | `failing` | problem or note | Failures, grouped by normalized cause |
 | `empty_output` | problem | A run succeeded and wrote nothing |
 | `success_despite_tool_errors` | problem | Every tool call errored and it still wrote something |

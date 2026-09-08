@@ -96,7 +96,7 @@ is_destructive="destructiveHint" in tags,
 
 Absence of `readOnlyHint` means write. That is the safe direction: px0 gates writes behind explicit consent, so a mislabelled read tool costs a confirmation, while a mislabelled write tool costs a message nobody approved.
 
-Discovered tools are cached in `.state/catalogue.json` rather than looked up at run time, for two reasons. A workflow must keep working offline and unchanged after it is written. And read-versus-write has to be knowable without a network call, because `--dry-run` decides what to stub from it.
+Discovered tools are cached in `.state/catalogue.json` rather than looked up at run time, for two reasons. A workflow must keep working offline and unchanged after it is written. And read-versus-write has to be knowable without a network call, because it decides which calls need the user's approval before they fire.
 
 The cache only ever grew until `forget` and `refresh` were added. `refresh` re-reads each cached tool and drops any that Composio has since deleted, rather than keeping a schema that no longer describes anything.
 

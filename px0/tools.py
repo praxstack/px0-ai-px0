@@ -410,8 +410,8 @@ def _discovered_spec(tool) -> ToolSpec:
     """Wraps a catalogue tool as a ToolSpec with a generic Composio handler.
 
     Every discovered tool executes through the same path the curated Composio
-    tools use, so authorization-on-demand, retries, and dry-run stubbing all
-    behave identically whether a tool was hand-written or found by `px0 workflows new`.
+    tools use, so authorization-on-demand and retries behave identically
+    whether a tool was hand-written or found by `px0 workflows new`.
     """
     def handler(args: dict, ctx: Context, _tool=tool) -> Any:
         return _composio_execute(ctx, _tool.toolkit, _tool.slug, args)

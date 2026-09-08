@@ -129,9 +129,9 @@ def test_every_field_is_its_own_labelled_row(tmp_home, capsys):
 
 
 def test_the_rows_are_aligned_on_one_column(tmp_home, capsys):
-    """`dry run` is the longest label here, so every value lines up past it."""
+    """`output` is the longest label here, so every value lines up past it."""
     cli._print_run_outcome(tmp_home, "wf", _record(
-        tool_calls=[{"tool": "composio:GITHUB_LIST_COMMITS"}], dry_run=True))
+        tool_calls=[{"tool": "composio:GITHUB_LIST_COMMITS"}], attempt=3, attempts=5))
 
     out, rows = _parse(capsys.readouterr().err)
     lines = [ln for ln in _ANSI.sub("", out).splitlines() if _ROW_RE.match(ln)]
@@ -147,14 +147,14 @@ def test_each_tool_a_run_called_gets_its_own_aligned_line(tmp_home, capsys):
         {"tool": "composio:GITHUB_LIST_COMMITS"},
         {"tool": "composio:GITHUB_LIST_COMMITS"},
         {"tool": "composio:GITHUB_LIST_PULL_REQUESTS"},
-        {"tool": "slack.post_message", "is_write": True, "stubbed": True},
+        {"tool": "slack.post_message", "is_write": True},
     ]))
 
     out, rows = _parse(capsys.readouterr().err)
     assert _values(rows)["tools"] == [
         "composio:GITHUB_LIST_COMMITS x2",
         "composio:GITHUB_LIST_PULL_REQUESTS",
-        "slack.post_message (stubbed)",
+        "slack.post_message",
     ]
     assert "," not in out.split("tools")[1].split("took")[0], "lines, not a comma run-on"
 
@@ -172,13 +172,6 @@ def test_a_continuation_line_sits_under_the_first_value_not_the_label(tmp_home, 
 
 
 # --- what else the block reports --------------------------------------------
-
-def test_a_rehearsal_says_so_rather_than_looking_like_a_real_run(tmp_home, capsys):
-    cli._print_run_outcome(tmp_home, "wf", _record(dry_run=True))
-
-    _, rows = _run_block(capsys)
-    assert "stubbed" in _values(rows)["dry run"][0]
-
 
 def test_a_retried_run_reports_which_attempt_succeeded(tmp_home, capsys):
     cli._print_run_outcome(tmp_home, "wf", _record(attempt=3, attempts=5))
@@ -205,7 +198,7 @@ def test_a_file_run_offers_the_command_that_prints_it(tmp_home, capsys):
 
 def test_no_row_carries_a_status_glyph(tmp_home, capsys):
     """A tick against `took` claims a check passed; nothing was checked."""
-    cli._print_run_outcome(tmp_home, "wf", _record(dry_run=True))
+    cli._print_run_outcome(tmp_home, "wf", _record())
 
     out, rows = _run_block(capsys)
     assert rows, "the rows still parse as bulleted rows"

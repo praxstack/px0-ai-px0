@@ -421,7 +421,6 @@ class _Args:
         self.workflow = workflow
         self.to = kw.get("to")
         self.candidates = kw.get("candidates", False)
-        self.dry_run = kw.get("dry_run", False)
         self.yes = kw.get("yes", True)
         self.json = kw.get("json", False)
 
@@ -473,11 +472,13 @@ def test_to_leaves_the_original_alone(monkeypatch, tmp_home, digest, quiet_spinn
     assert "{{input.channel}}" in shared
 
 
-def test_a_dry_run_writes_nothing(monkeypatch, tmp_home, digest, quiet_spinner):
+def test_declining_the_confirmation_writes_nothing(monkeypatch, tmp_home, digest,
+                                                    quiet_spinner):
     monkeypatch.setattr(cli, "_ctx", lambda: (tmp_home, {}))
     monkeypatch.setattr(templates.harness, "invoke", reply_with(ACCEPTED))
+    monkeypatch.setattr(cli, "_confirm", lambda *a, **kw: False)
 
-    cli.cmd_workflows_templatize(_Args(dry_run=True))
+    cli.cmd_workflows_templatize(_Args(yes=False))
 
     assert digest.path.read_text() == DIGEST
 

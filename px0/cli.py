@@ -934,7 +934,7 @@ def _build_workflow(home: Path, config: dict, description: str,
         ui.hint("finish the consent in your browser, then:")
     else:
         ui.hint("try next:")
-    ui.command(f"px0 workflows run {workflow_id} --dry-run")
+    ui.command(f"px0 workflows run {workflow_id}")
 
 
 def _pick_workflow(home: Path, for_stdin: bool, verb: str = "run") -> str:
@@ -963,24 +963,17 @@ def _pick_workflow(home: Path, for_stdin: bool, verb: str = "run") -> str:
 
 
 def _tool_call_summary(tool_calls: list[dict]) -> list[str]:
-    """Which tools a run actually called, with repeats counted and stubs marked.
+    """Which tools a run actually called, with repeats counted.
 
     A run's own record of what it touched, one tool per line. `x2` rather than
     two identical lines, because the interesting part is which tools ran, not how
     long the list is.
     """
     counts: dict[str, int] = {}
-    stubbed: set[str] = set()
     for call in tool_calls:
         tool = call.get("tool") or "?"
         counts[tool] = counts.get(tool, 0) + 1
-        if call.get("stubbed"):
-            stubbed.add(tool)
-    lines = []
-    for tool, n in counts.items():
-        label = tool if n == 1 else f"{tool} x{n}"
-        lines.append(f"{label} (stubbed)" if tool in stubbed else label)
-    return lines
+    return [tool if n == 1 else f"{tool} x{n}" for tool, n in counts.items()]
 
 
 def _print_run_outcome(home: Path, workflow_id: str, record: dict,
@@ -1017,8 +1010,6 @@ def _print_run_outcome(home: Path, workflow_id: str, record: dict,
         rows.append(("attempt", f"{record['attempt']} of {record.get('attempts', '?')}"))
     if record.get("duration_seconds") is not None:
         rows.append(("took", f"{record['duration_seconds']:.1f}s"))
-    if record.get("dry_run"):
-        rows.append(("dry run", "write tools were stubbed, not called"))
     if error:
         rows.append(("error", ui.alert(error, stream=sys.stderr)))
 
@@ -1036,7 +1027,7 @@ def _print_run_outcome(home: Path, workflow_id: str, record: dict,
     elif not ok and record.get("id"):
         ui.hint("what the run did before it failed:", stream=sys.stderr)
         ui.command(f"px0 runs logs {record['id']}", stream=sys.stderr)
-    if ok and record.get("id") and not record.get("dry_run"):
+    if ok and record.get("id"):
         # Whether the output was any *good* is the one thing no record can
         # infer, and the moment the user has just read it is the only moment
         # they know. Offered here rather than asked, so a scripted run is not
@@ -1111,7 +1102,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         with ui.spinner(f"Running {workflow_id}", quiet=args.quiet or args.json):
             record = runner.run(
                 home, config, workflow_id, trigger=trigger, cli_inputs=cli_inputs,
-                dry_run=args.dry_run, output_override=output_override,
+                output_override=output_override,
                 late_scheduled_at=args.late_scheduled_at,
                 timeout_override=getattr(args, "timeout", None),
                 retry=not getattr(args, "no_retry", False),
@@ -1615,13 +1606,6 @@ def cmd_workflows_templatize(args: argparse.Namespace) -> None:
     _print_diff(replay_mod.diff(original, new_text), limit=60)
     print(flush=True)
 
-    if getattr(args, "dry_run", False):
-        ui.info("dry run", "nothing written")
-        ui.hint("write it with:")
-        ui.command(f"px0 workflows templatize {workflow_id}"
-                   + (f" --to {new_id}" if new_id else ""))
-        return
-
     question = (f"Write this template to {dest.relative_to(home)}?" if new_id
                 else f"Rewrite {dest.relative_to(home)} as a template?")
     if not _confirm(question, getattr(args, "yes", False)):
@@ -1922,11 +1906,8 @@ def _parse_tool_args(pairs: list[str] | None) -> dict:
 
 
 def _tools_call(args: argparse.Namespace) -> None:
-    """Handles `px0 tools call`: fire one tool and look at the result.
-
-    A dry run stubs every write, so before this the first real call a tool ever
-    made was inside a live workflow.
-    """
+    """Handles `px0 tools call`: fire one tool and look at the result, with its
+    own confirmation prompt for a write tool -- see below."""
     home, config = _ctx()
     spec = tools.resolve(args.tool, home)
     if spec is None:
@@ -2224,8 +2205,7 @@ def _print_health(home: Path, report: dict) -> None:
     """The full report for one workflow: what the window held, then what it says."""
     runs = report.get("runs", {})
     ui.heading(f"health {ui.accent(report['workflow'])}")
-    rows = [("runs", f"{runs.get('live', 0)} live"
-                     + (f", {runs['dry_runs']} dry" if runs.get("dry_runs") else ""))]
+    rows = [("runs", f"{runs.get('live', 0)}")]
     if runs.get("live"):
         rows.append(("outcome", f"{runs.get('success', 0)} ok, {runs.get('failed', 0)} failed"))
     if runs.get("median_seconds") is not None:
@@ -2671,12 +2651,6 @@ def cmd_workflows_improve(args: argparse.Namespace) -> None:
         ui.info("no change proposed", "these runs do not support one")
         return
 
-    if getattr(args, "dry_run", False):
-        ui.info("dry run", "nothing applied")
-        ui.hint("apply it with:")
-        ui.command(f"px0 workflows improve {workflow_id}")
-        return
-
     # The guideline edits are settled first and separately. They are the
     # cheaper, more reusable half of most proposals -- a rule about how output
     # should read helps every workflow that carries the file -- and a user who
@@ -2873,16 +2847,6 @@ def cmd_runs(args: argparse.Namespace) -> None:
         sys.exit(EXIT_USER_ERROR)
 
     if args.runs_cmd == "prune":
-        if args.dry_run:
-            records = runs_mod.list_records(config)
-            ui.info("retention applies to", f"{len(records)} record(s)")
-            ui.kv("logs kept for", f"{config_mod.get(config, 'logs.retention_days', 14)} days")
-            ui.kv("failed logs kept for",
-                  f"{config_mod.get(config, 'logs.retention_days_failed', 60)} days")
-            ui.kv("records kept for",
-                  f"{config_mod.get(config, 'logs.record_retention_days', 365)} days")
-            ui.hint("runs that called a write tool are never pruned")
-            return
         removed = runs_mod.apply_retention(config)
         ui.ok("pruned", f"{removed['logs']} log(s), {removed['records']} record(s)")
         return
@@ -2922,14 +2886,8 @@ def cmd_runs(args: argparse.Namespace) -> None:
         if not wf_id:
             ui.err("nothing to rerun", "this run was an ask, not a workflow")
             sys.exit(EXIT_USER_ERROR)
-        # A rehearsal reruns as a rehearsal: replaying a --dry-run record as a
-        # live run would fire the write tools the original deliberately stubbed.
-        was_dry = bool(record.get("dry_run"))
-        if was_dry:
-            ui.info("original was a dry run", "rerunning with --dry-run; "
-                    "run it directly to execute for real")
         with ui.spinner(f"Rerunning {wf_id}"):
-            new_record = runner.run(home, config, wf_id, trigger="manual", dry_run=was_dry)
+            new_record = runner.run(home, config, wf_id, trigger="manual")
         # The same block `workflows run` prints: a rerun is a run, and the new
         # run id is in the `run` row rather than folded into a sentence.
         _print_run_outcome(home, wf_id, new_record)
@@ -3247,7 +3205,6 @@ def cmd_store(args: argparse.Namespace) -> None:
         remote = Path(args.dir).expanduser()
         try:
             result = sync_mod.sync(home, remote,
-                                   dry_run=getattr(args, "dry_run", False),
                                    pull_only=getattr(args, "pull", False),
                                    push_only=getattr(args, "push", False))
         except sync_mod.SyncError as e:
@@ -3255,15 +3212,6 @@ def cmd_store(args: argparse.Namespace) -> None:
             sys.exit(EXIT_USER_ERROR)
         if getattr(args, "json", False):
             _dump(args, result)
-            return
-
-        if not result["applied"]:
-            ui.heading("what a sync would do")
-            ui.kv("send", f"{len(result['push'])} file(s)")
-            ui.kv("take", f"{len(result['pull'])} file(s)")
-            ui.kv("conflict", f"{len(result['conflict'])} file(s)")
-            for rel in result["conflict"][:10]:
-                ui.field("both changed", rel, width=12)
             return
 
         ui.ok("synced", f"{len(result['pushed'])} sent, {len(result['pulled'])} taken")

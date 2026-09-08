@@ -138,11 +138,10 @@ A row carries markers for facts that would otherwise be invisible in a listing:
 
 ```python
 marker = "  [write]" if wrote else ""
-if r.get("dry_run"):  marker += "  [dry-run]"
-if verdict:           marker += f"  [{verdict}]"
+if verdict:  marker += f"  [{verdict}]"
 ```
 
-A rehearsal looked identical to a real run. A run someone judged reads differently from one nobody looked at, and the listing is where you go looking for the bad ones.
+A run someone judged reads differently from one nobody looked at, and the listing is where you go looking for the bad ones.
 
 ## Status
 

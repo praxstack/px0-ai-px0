@@ -137,7 +137,6 @@ def test_workflow_modals(web_test_env):
         assert resp.status == 200
         html = resp.read().decode()
         assert "Run Workflow" in html
-        assert "Dry run" in html
 
     # Schedule edit modal
     with urllib.request.urlopen(f"{base_url}/api/schedules/daily-test/edit") as resp:
@@ -197,7 +196,7 @@ def test_daemon_tick(web_test_env):
 
 def test_workflow_run_trigger(web_test_env):
     base_url = web_test_env["base_url"]
-    data = urllib.parse.urlencode({"dry_run": "true"}).encode()
+    data = urllib.parse.urlencode({}).encode()
     req = urllib.request.Request(f"{base_url}/api/workflows/daily-test/trigger", method="POST", data=data)
     with urllib.request.urlopen(req) as resp:
         assert resp.status == 200

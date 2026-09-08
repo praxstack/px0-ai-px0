@@ -11,7 +11,6 @@ Every tool carries `is_write`, and it is the axis everything else hangs off.
 | Consequence | Read tool | Write tool |
 | ----------- | --------- | ---------- |
 | Usable as an `inputs:` entry | yes | refused by validation |
-| Stubbed by `--dry-run` | no | yes |
 | Can be held for approval | no | yes |
 | Exempts a run's log from retention | no | yes |
 | Offered to `px0 ask`'s router | yes | no |
@@ -49,22 +48,9 @@ A client that invents an MCP tool name gets a refusal, not a call.
 
 A refusal is never silent. `analysis._check_refused_tools` reports it as a problem, because either the instructions describe work the allowlist cannot do, or the model is wandering.
 
-## Dry runs
-
-`--dry-run` resolves inputs for real and stubs every write:
-
-```python
-elif dry_run and is_write:
-    result = {"stubbed": True, "success": True}
-```
-
-The run record carries `dry_run: true`, and that flag propagates. `px0 runs list` labels it, `runs rerun` refuses to replay it as a live run without being told to, `analysis` excludes rehearsals from every rate that would be distorted by them, and the inbox never delivers one -- a dry run's output is a sample, not news.
-
-`analysis._check_dry_run_only` reports the opposite case too: "all runs here were rehearsals, this has never run for real" is worth saying.
-
 ## Approvals: the missing middle
 
-The trust model above is binary. A tool either mutates something or it does not, and a workflow either may call it or may not. `--dry-run` rehearses a workflow but never does the work. There was no way to say draft it and ask me, so anything speaking in the user's name had to be handed the real capability up front, on the strength of a plan read once.
+The trust model above is binary. A tool either mutates something or it does not, and a workflow either may call it or may not. There was no way to say draft it and ask me, so anything speaking in the user's name had to be handed the real capability up front, on the strength of a plan read once.
 
 An approval is that middle. The call is not executed. It is written down in full -- tool, arguments, the run that drafted it, and what that run was for -- and the model is told it has been queued.
 
@@ -252,7 +238,7 @@ Both `on_failure` and `on_approval` are wrapped so they cannot raise. A failed n
 
 ## What a run's record proves
 
-Put together, a run record answers: which version of the workflow ran, which guidelines and memories were in the prompt, every tool called with its arguments and whether it was refused, stubbed, queued, or executed, what each call returned in summary, what was drafted for approval and what became of it, what the run cost, and where its output went.
+Put together, a run record answers: which version of the workflow ran, which guidelines and memories were in the prompt, every tool called with its arguments and whether it was refused, queued, or executed, what each call returned in summary, what was drafted for approval and what became of it, what the run cost, and where its output went.
 
 That is the audit trail, and it is what `px0 runs why` prints.
 

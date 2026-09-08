@@ -86,17 +86,14 @@ def deliver(home: Path, config: dict, *, workflow_id: str, run_id: str,
     return entry
 
 
-def should_deliver(config: dict, wf, trigger: str, dry_run: bool) -> bool:
+def should_deliver(config: dict, wf, trigger: str) -> bool:
     """Whether this run's output belongs in the inbox.
 
     Scheduled and watched runs deliver by default and manual ones do not: you
     were there for a manual run and have just read its output, where a nightly
     one produced something at 6am that nothing has told you about. A workflow
-    can force either answer with `output.inbox`, and a rehearsal never
-    delivers -- a dry run's output is a sample, not news.
+    can force either answer with `output.inbox`.
     """
-    if dry_run:
-        return False
     explicit = (getattr(wf, "output", None) or {}).get("inbox")
     if isinstance(explicit, bool):
         return explicit

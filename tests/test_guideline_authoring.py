@@ -435,10 +435,26 @@ def test_route_output_guideline_writes_a_versioned_guideline_file(tmp_home):
     assert claims.guidelines_log(tmp_home, "guidelines/pr-review.md#flag-only-real-breakage")
 
 
-def test_route_output_guideline_requires_headed_sections(tmp_home):
-    with pytest.raises(runner.RunError, match="## "):
-        runner.route_output(tmp_home, {"target": "guideline", "path": "x.md"},
-                            "Just a paragraph, no heading.")
+def test_route_output_guideline_with_no_sections_skips_rather_than_fails(tmp_home):
+    """"Nothing new to fold in this week" is a normal answer for a sync job,
+    not a broken run -- failing it would trip retries and the circuit breaker
+    on a job doing exactly what it should."""
+    res = runner.route_output(tmp_home, {"target": "guideline", "path": "x.md"},
+                              "No new review comments since last week.")
+
+    assert res["target"] == "guideline" and res["path"] is None and "skipped" in res
+    assert not (paths.guidelines_dir(tmp_home) / "x.md").exists()
+
+
+def test_route_output_guideline_with_no_sections_leaves_an_existing_file_alone(tmp_home):
+    runner.route_output(tmp_home, {"target": "guideline", "path": "x.md"},
+                        "## H\n\nb\n", workflow_id="w")
+
+    runner.route_output(tmp_home, {"target": "guideline", "path": "x.md"},
+                        "Nothing to update this week.", workflow_id="w")
+
+    assert "H" in (paths.guidelines_dir(tmp_home) / "x.md").read_text()
+    assert len(versioning.list_versions(tmp_home, "guidelines/x.md")) == 1
 
 
 def test_route_output_guideline_requires_a_path(tmp_home):

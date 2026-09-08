@@ -82,7 +82,6 @@ This is the deliberate version. Content is Markdown, so it merges file by file.
 History does not merge and is not pretended to: each machine keeps its own.
 
 ```shell
-px0 store sync ~/Dropbox/px0-shared --dry-run   # what would move
 px0 store sync ~/Dropbox/px0-shared
 px0 store sync ~/Dropbox/px0-shared --pull      # take only
 px0 store sync ~/Dropbox/px0-shared --push      # send only

@@ -88,7 +88,7 @@ def test_tool_call_loop_elapsed_seconds(tmp_home, monkeypatch):
 
     # Run tool call loop
     output, tool_calls, usage = runner._tool_call_loop(
-        tmp_home, {}, "Initial prompt", ["slack.post_message"], False, 60.0, "run_123"
+        tmp_home, {}, "Initial prompt", ["slack.post_message"], 60.0, "run_123"
     )
 
     assert len(tool_calls) == 1
@@ -234,19 +234,6 @@ def test_detail_view_refuses_to_rerun_an_ask(tmp_home, monkeypatch):
     calls = _detail_view_pressing_r(tmp_home, monkeypatch, ask)
 
     assert calls == [], "an ask run must never reach the runner"
-
-
-def test_detail_view_replays_a_dry_run_as_a_dry_run(tmp_home, monkeypatch):
-    """Replaying a rehearsal as a live run would fire the write tools the
-    original deliberately stubbed. `px0 runs rerun` guards this too."""
-    rehearsal = {"id": "run_old", "workflow_id": "wf-a", "trigger": "manual",
-                 "outcome": "success", "dry_run": True, "tool_calls": [],
-                 "guidelines_inlined": []}
-
-    calls = _detail_view_pressing_r(tmp_home, monkeypatch, rehearsal, reads_before_exit=2)
-
-    assert calls, "the rerun must reach the runner"
-    assert all(kw.get("dry_run") is True for _, kw in calls), calls
 
 
 def test_module_has_every_name_its_key_handlers_use():

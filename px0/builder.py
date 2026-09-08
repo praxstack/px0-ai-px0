@@ -449,7 +449,10 @@ def generate_plan(config: dict, description: str,
         "model to answer in px0's guideline shape: two to five `## ` sections, "
         "each a short prescriptive heading (\"Flag only real breakage\", not "
         "\"Breakage\") with two or three lines of plain prose under it, no "
-        "preamble and no top-level title, "
+        "preamble and no top-level title -- and to say so in plain prose, with "
+        "no `## ` sections, instead, on a run that finds nothing worth folding "
+        "in, since a run with no sections leaves the guideline untouched, "
+        "rather than force sections onto a week with nothing to report, "
         '"body" (the instruction text the model receives at run time; reference '
         "each input by {{input_id}}. A run has nobody to answer questions, so "
         "NEVER write a step that asks the user for a value or stops until they "

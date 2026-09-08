@@ -135,7 +135,7 @@ def loop(tmp_home, config, monkeypatch):
             harness, "invoke_detailed",
             lambda *a, **kw: script.pop(0) if script else harness.Reply(text="Done"))
         out = runner._tool_call_loop(
-            tmp_home, config, "prompt", list(allowed), False, 60.0, RUN_ID)
+            tmp_home, config, "prompt", list(allowed), 60.0, RUN_ID)
         return out, runs_mod.read_events(config, RUN_ID)
 
     return _run

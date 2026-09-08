@@ -38,13 +38,13 @@ def loop(tmp_home, monkeypatch):
 
     monkeypatch.setattr(tools, "call", fake_call)
 
-    def _run(turns: list[str], allowed: list[str], dry_run: bool = False):
+    def _run(turns: list[str], allowed: list[str]):
         script = list(turns)
         monkeypatch.setattr(
             harness, "invoke_detailed",
             lambda *a, **kw: harness.Reply(text=script.pop(0) if script else "Done"))
         output, calls, usage = runner._tool_call_loop(
-            tmp_home, {}, "prompt", allowed, dry_run, 60.0, "run_20260101-000000-aaaa")
+            tmp_home, {}, "prompt", allowed, 60.0, "run_20260101-000000-aaaa")
         return {"output": output, "calls": calls, "usage": usage, "executed": executed}
 
     return _run
@@ -82,17 +82,6 @@ def test_an_allowed_tool_still_runs(loop):
                   allowed=["github.list_prs"])
     assert result["executed"] == [("github.list_prs", {"n": 5})]
     assert result["calls"][0]["refused"] is False
-
-
-def test_a_dry_run_still_stubs_a_write_tool_rather_than_refusing_it(loop):
-    """Stubbing and refusing are different outcomes and must stay so: a
-    rehearsal of an allowed write is not an allowlist violation."""
-    result = loop(['TOOL_CALL: {"tool": "slack.post_message", "args": {}}', "Done"],
-                  allowed=["slack.post_message"], dry_run=True)
-    assert result["executed"] == []
-    assert result["calls"][0]["stubbed"] is True
-    assert result["calls"][0]["refused"] is False
-    assert result["calls"][0]["failed"] is False
 
 
 def test_a_workflow_with_no_allowlist_calls_nothing(loop):

@@ -231,7 +231,6 @@ class WebUIHandler(SimpleHTTPRequestHandler):
         if path.startswith("/api/workflows/") and path.endswith("/trigger"):
             wf_id = path[len("/api/workflows/"):-len("/trigger")]
             try:
-                dry_run = form_data.get("dry_run", ["false"])[0] == "true"
                 cli_inputs = {}
                 for k, v in form_data.items():
                     if k.startswith("var_") and v:
@@ -246,7 +245,6 @@ class WebUIHandler(SimpleHTTPRequestHandler):
                             wf_id,
                             trigger="manual",
                             cli_inputs=cli_inputs,
-                            dry_run=dry_run
                         )
                     except Exception as ex:
                         pass

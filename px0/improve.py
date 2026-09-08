@@ -109,7 +109,7 @@ def evidence(home: Path, config: dict, wf: workflow_mod.Workflow, report: dict,
     bulk of the prompt and, mostly, noise: a run nobody complained about is
     evidence that things are fine, and one line saying so carries that.
     """
-    live = [r for r in records if not r.get("dry_run")]
+    live = list(records)
 
     marked = []
     for rec in records:

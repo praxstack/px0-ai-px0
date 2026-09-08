@@ -40,9 +40,6 @@ def format_row(r: dict, widths: dict[str, int] | None = None) -> str:
     widths = widths or {}
     wrote = any(c.get("is_write") for c in r.get("tool_calls", []))
     marker = "  [write]" if wrote else ""
-    if r.get("dry_run"):
-        # A rehearsal looked identical to a real run in the listing.
-        marker += "  [dry-run]"
     verdict = (r.get("review") or {}).get("verdict")
     if verdict:
         # A run someone judged reads differently from one nobody looked at, and
@@ -459,22 +456,12 @@ def _detail_view(stdscr, home: Path, config: dict, record_brief: dict) -> None:
         elif key in (ord('r'), ord('R')):
             new_run_id = None
             wf_id = record.get("workflow_id")
-            was_dry = bool(record.get("dry_run"))
             with _suspended():
                 if not wf_id:
                     # An ask run names no workflow. Without this the key handed
                     # the runner None, which wrote a phantom "no such workflow:
                     # None" record into the history before failing.
                     print("nothing to rerun: this run was an ask, not a workflow")
-                elif was_dry:
-                    # A rehearsal reruns as a rehearsal, as `px0 runs rerun`
-                    # does: replaying a --dry-run record live would fire the
-                    # write tools the original deliberately stubbed.
-                    print(f"Rerunning {wf_id} with --dry-run (the original was one)...")
-                    # runner.run returns the whole record, not an id
-                    new_run_id = runner.run(home, config, wf_id, trigger="manual",
-                                            dry_run=True)["id"]
-                    print(f"Spawned {new_run_id}")
                 else:
                     print(f"Rerunning {wf_id}...")
                     new_run_id = runner.run(home, config, wf_id,

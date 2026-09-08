@@ -9,10 +9,10 @@ from a description), and `px0/runner.py` (execution).
 
 ```
 px0 workflows new
-px0 workflows run [workflow] [--input K=V] [--output {stdout,file}] [--timeout DURATION] [--no-retry] [--dry-run] [--stdin] [--quiet] [--json]
+px0 workflows run [workflow] [--input K=V] [--output {stdout,file}] [--timeout DURATION] [--no-retry] [--stdin] [--quiet] [--json]
 px0 workflows edit [workflow] [--yes] [--no-clarify] [--no-discover]
 px0 workflows health [workflow] [--since AGE] [--fix] [--yes] [--json]
-px0 workflows improve [workflow] [--since AGE] [--dry-run] [--show-evidence] [--yes] [--no-clarify] [--no-discover] [--json]
+px0 workflows improve [workflow] [--since AGE] [--show-evidence] [--yes] [--no-clarify] [--no-discover] [--json]
 px0 workflows recipes [--json]
 px0 workflows replay <workflow> [--run ID] [--against FILE] [--fixtures] [--forget] [--json]
 px0 workflows list
@@ -21,7 +21,7 @@ px0 workflows validate [workflow] [--json]
 px0 workflows delete [workflow] [--yes]
 px0 workflows rename <workflow> <new-id>
 px0 workflows copy <workflow> <new-id>
-px0 workflows templatize [workflow] [--to NEW-ID] [--candidates] [--dry-run] [--yes] [--json]
+px0 workflows templatize [workflow] [--to NEW-ID] [--candidates] [--yes] [--json]
 px0 workflows disable <workflow>
 px0 workflows enable <workflow>
 ```
@@ -182,9 +182,8 @@ success github-daily-commit-summary
   · run      run_20260824-093444-f88a
   · output   ~/.px0/output/logs/daily-commits-2026-08-24.md
   · tools    composio:GITHUB_LIST_COMMITS x2
-             slack.post_message (stubbed)
+             slack.post_message
   · took     39.6s
-  · dry run  write tools were stubbed, not called
 
 read it here:
   px0 runs open run_20260824-093444-f88a
@@ -193,10 +192,9 @@ read it here:
 `output` is written the same way a build writes it, so what was promised and what
 was produced read alike. A stdout workflow says `printed below` instead, and the
 text follows on stdout. `tools` gets a line per tool, counting repeats rather
-than listing them twice and marking the write tools a `--dry-run` stubbed.
-`attempt` appears only when a retry was needed. A store outside your home
-directory — a `PX0_HOME` elsewhere — is printed in full, having no `~` to
-abbreviate against.
+than listing them twice. `attempt` appears only when a retry was needed. A store
+outside your home directory — a `PX0_HOME` elsewhere — is printed in full, having
+no `~` to abbreviate against.
 
 The rows are bullets, not ticks: each one is a fact about the run rather than a
 check that passed, and the verdict is the heading. A failure keeps the same
@@ -240,13 +238,6 @@ Where the result goes, overriding what the workflow declares.
 - **Input:** `stdout` or `file`.
 - **Default:** whatever the workflow's frontmatter says.
 - `file` writes under `output.path`; the run record carries the path.
-
-### `--dry-run`
-
-Show what would happen without calling any tool or writing any output.
-
-- **Input:** flag, no value. Default off.
-- Use it to check a workflow's plan and tool set before letting it act.
 
 ### `--stdin`
 
@@ -445,7 +436,6 @@ Implemented by `px0/improve.py`.
 - **Arguments:** a workflow id; omit it to pick one from a list.
 
 ```shell
-px0 workflows improve friday-pr-digest --dry-run       # see the proposal, apply nothing
 px0 workflows improve friday-pr-digest --show-evidence # see what the model is given
 px0 workflows improve friday-pr-digest
 ```
@@ -484,10 +474,6 @@ proposal anyway.
 Only learn from runs newer than this.
 
 - **Input:** a relative span — `<n>d`, `<n>w`, or `<n>h`.
-
-### `--dry-run`
-
-Print the proposal and apply none of it.
 
 ### `--show-evidence`
 
@@ -841,10 +827,6 @@ Print what the scan found and stop. No model call, no network.
 Useful for the question "is there anything here worth sharing at all", and for
 seeing the complete set of literals that a proposal could possibly touch.
 
-### `--dry-run`
-
-Show the proposal and the diff, and write nothing.
-
 ### `--yes`
 
 Skip the confirmation before the file is written.
@@ -1046,6 +1028,11 @@ shape `px0 workflows new` asks for when it drafts one. `output.description` is
 only used the first time the file is written; a rerun refreshes the rules but
 never overwrites a description you've since hand-edited, since that line is
 what a later build matches the file against.
+
+A run whose output has no `## ` sections is not a failure — it is read as "no
+new material this time," a normal answer for a periodic sync that found
+nothing worth folding in, so the existing guideline is left untouched rather
+than the run being failed and retried.
 
 ### Pipelines that can skip a stage
 

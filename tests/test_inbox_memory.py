@@ -64,15 +64,6 @@ def test_a_manual_run_is_not(tmp_home, config, monkeypatch):
     assert inbox.listing(tmp_home) == []
 
 
-def test_a_rehearsal_is_never_delivered(tmp_home, config, monkeypatch):
-    """A dry run's output is a sample, not news."""
-    _write(tmp_home)
-    monkeypatch.setattr(harness, "invoke_detailed",
-                        lambda *a, **kw: harness.Reply(text="output"))
-    runner.run(tmp_home, config, "demo", trigger="schedule", dry_run=True)
-    assert inbox.listing(tmp_home) == []
-
-
 def test_a_workflow_can_ask_to_be_delivered_from_a_manual_run(tmp_home, config, monkeypatch):
     _write(tmp_home, extra="")
     (paths.workflows_dir(tmp_home) / "demo.md").write_text(

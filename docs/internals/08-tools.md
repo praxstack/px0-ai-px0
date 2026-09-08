@@ -40,7 +40,7 @@ class ToolSpec:
     handler: Callable[[dict, Context], Any]
 ```
 
-`exists`, `is_write`, `list_tools`, and `call` all go through `resolve`, so authorization on demand, retries, dry-run stubbing, and the approval gate behave identically whether a tool was hand-written or found by a catalogue search.
+`exists`, `is_write`, `list_tools`, and `call` all go through `resolve`, so authorization on demand, retries, and the approval gate behave identically whether a tool was hand-written or found by a catalogue search.
 
 Parameter types use a compact notation: `{"path": "str*"}`, where a trailing `*` marks the parameter required. `mcp._json_schema` expands that into JSON Schema when a tool is exposed over MCP.
 
@@ -111,7 +111,7 @@ def _discovered_spec(tool) -> ToolSpec:
     return ToolSpec(id=tool.id, provider=tool.toolkit, ...)
 ```
 
-One execution path means authorization on demand, retries, and dry-run stubbing all behave the same for both.
+One execution path means authorization on demand and retries all behave the same for both.
 
 ## Executing through Composio
 

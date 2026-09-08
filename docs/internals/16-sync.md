@@ -138,7 +138,7 @@ Any system with deduplicated content-addressed storage and a history has this pr
 | Backing up | `px0 store export` |
 | Sharing workflows with someone else | `px0 store export`, then hand them the folder |
 
-`--dry-run` on sync says what would move and stops. `--pull` and `--push` restrict the direction.
+`--pull` and `--push` restrict the direction.
 
 ## Next
 

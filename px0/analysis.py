@@ -112,8 +112,8 @@ def gather(config: dict, workflow_id: str, since: datetime | None = None,
 
 
 def _live(records: list[dict]) -> list[dict]:
-    """Runs that actually executed: a rehearsal is excluded from every rate."""
-    return [r for r in records if not r.get("dry_run")]
+    """Every run counted toward a rate."""
+    return list(records)
 
 
 def _tool_calls(records: list[dict]) -> list[tuple[dict, dict]]:
@@ -161,7 +161,6 @@ def health(home: Path, config: dict, workflow_id: str,
     summary = {
         "records": len(records),
         "live": total,
-        "dry_runs": len(records) - total,
         "success": outcomes.get("success", 0),
         "failed": failed,
         "failure_rate": round(failed / total, 3) if total else None,
@@ -175,7 +174,7 @@ def health(home: Path, config: dict, workflow_id: str,
     summary.update(_usage_summary(live))
 
     for check in (
-        _check_nothing_to_go_on, _check_dry_run_only, _check_failures,
+        _check_nothing_to_go_on, _check_failures,
         _check_silent_success, _check_refused_tools, _check_failing_tools,
         _check_dead_tools, _check_turn_cap, _check_retry_pressure,
         _check_timeouts, _check_empty_inputs, _check_marks,
@@ -229,16 +228,6 @@ def _check_nothing_to_go_on(home, config, wf, records, live, summary) -> list[Fi
                  "the window is shorter than its schedule" if scheduled else ""))
     return [Finding("no_runs", "note", detail,
                     fix="px0 status" if scheduled else f"px0 workflows run {wf.id}")]
-
-
-def _check_dry_run_only(home, config, wf, records, live, summary) -> list[Finding]:
-    if records and not live:
-        return [Finding(
-            "dry_run_only", "note",
-            f"all {len(records)} run(s) here were rehearsals -- this has never run for real",
-            evidence={"dry_runs": len(records)},
-            fix=f"px0 workflows run {wf.id}")]
-    return []
 
 
 def _is_timeout(record: dict) -> bool:
@@ -299,7 +288,7 @@ def _check_silent_success(home, config, wf, records, live, summary) -> list[Find
         text = (rec.get("output") or {}).get("text")
         if text is not None and not str(text).strip():
             empty.append(rec)
-        calls = [c for c in (rec.get("tool_calls") or []) if not c.get("stubbed")]
+        calls = rec.get("tool_calls") or []
         if calls and all(_call_failed(c) for c in calls):
             all_errored.append(rec)
     findings = []
@@ -341,7 +330,7 @@ def _check_refused_tools(home, config, wf, records, live, summary) -> list[Findi
 def _check_failing_tools(home, config, wf, records, live, summary) -> list[Finding]:
     stats: dict[str, list[bool]] = defaultdict(list)
     for _rec, call in _tool_calls(live):
-        if call.get("stubbed") or call.get("refused"):
+        if call.get("refused"):
             continue
         stats[call.get("tool", "?")].append(_call_failed(call))
     findings = []
@@ -698,16 +687,11 @@ def consecutive_failures(config: dict, workflow_id: str,
     is the only reading that answers "is this broken *now*". A rate over a
     window cannot: a workflow that failed thirty times last week and has
     worked every day since has a terrible rate and nothing wrong with it.
-
-    Rehearsals are skipped rather than counted or treated as successes -- a
-    dry run says nothing about whether the real thing works.
     """
     found = (records if records is not None
              else runs_mod.list_records(config, workflow=workflow_id))
     streak, shape, ids = 0, None, []
     for record in found:
-        if record.get("dry_run"):
-            continue
         if record.get("outcome") != "failed":
             break
         current = normalize_error(record.get("error", ""))

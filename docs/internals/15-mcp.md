@@ -53,7 +53,6 @@ px0's builtin loop drives the model turn by turn over a text protocol, which cap
   "reason": "Summarize the PRs I reviewed and post to #eng",
   "tools": ["github.list_my_prs", "slack.post_message"],
   "confirm_tools": ["slack.post_message"],
-  "dry_run": false,
   "calls_path": "/tmp/px0-scope-xyz/calls.jsonl"
 }
 ```
@@ -69,9 +68,6 @@ by_name = {mcp_name(t): t for t in scope.get("tools") or []}
 tool_id = by_name.get(name)
 if tool_id is None:
     ...refuse
-
-if scope.get("dry_run") and is_write:
-    ...stub
 
 if is_write and tool_id in set(scope.get("confirm_tools") or []):
     ...queue for approval
@@ -118,7 +114,7 @@ The server runs in a process the harness started, not px0. The run cannot observ
 
 `_append_scope_call` appends one JSON line per call to `calls_path`, and `runner._read_scope_calls` reads it back. That file is the only account a run has of what its own tools did.
 
-It is written for every outcome -- refused, stubbed, queued, failed, executed -- so the run record is complete regardless of what happened. And it is read even when the harness dies mid-loop, because retention exempts runs that called a write tool and losing the record of a post would let its log be pruned as though nothing had happened.
+It is written for every outcome -- refused, queued, failed, executed -- so the run record is complete regardless of what happened. And it is read even when the harness dies mid-loop, because retention exempts runs that called a write tool and losing the record of a post would let its log be pruned as though nothing had happened.
 
 Writing to the sidecar swallows `OSError`, `TypeError`, and `ValueError`. A telemetry file that cannot be written must not fail the tool call it was recording.
 

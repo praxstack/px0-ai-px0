@@ -254,7 +254,7 @@ def test_completion_offers_verbs_for_a_group():
 
 def test_completion_offers_flags_when_a_dash_is_typed():
     out = completion.complete(cli.build_parser(), ["workflows", "run", "--"])
-    assert "--dry-run" in out
+    assert "--timeout" in out
 
 
 def test_completion_hides_internal_flags():

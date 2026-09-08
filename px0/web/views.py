@@ -655,13 +655,6 @@ def render_run_modal(wf) -> str:
             <p style="color: var(--text-dim); margin-bottom: 12px;">{_escape(wf.description or 'Execute this workflow immediately.')}</p>
             {vars_inputs_html}
 
-            <div class="form-group" style="margin-top: 16px;">
-              <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                <input type="checkbox" name="dry_run" value="true" />
-                <span>Dry run (rehearsal - skips write tool calls)</span>
-              </label>
-            </div>
-
             <div id="run-status-result" style="margin-top: 16px;"></div>
           </div>
           <div class="modal-footer">

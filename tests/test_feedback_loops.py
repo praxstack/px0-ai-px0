@@ -39,7 +39,7 @@ def _failure(config, error, minutes, wf_id="demo", outcome="failed"):
     runs_mod.write_record(config, {
         "id": f"run_{when.strftime('%Y%m%d-%H%M%S')}-{minutes:04x}",
         "workflow_id": wf_id, "outcome": outcome, "error": error,
-        "start_time": when.isoformat(), "dry_run": False, "tool_calls": [],
+        "start_time": when.isoformat(), "tool_calls": [],
     })
 
 
@@ -69,17 +69,6 @@ def test_a_different_cause_ends_the_streak(tmp_home, config):
     _failure(config, "not authenticated", minutes=2)
     _failure(config, "connector refused", minutes=3)
     assert analysis.consecutive_failures(config, "demo")["count"] == 1
-
-
-def test_a_rehearsal_neither_counts_nor_clears(tmp_home, config):
-    when = datetime.now(timezone.utc)
-    runs_mod.write_record(config, {
-        "id": f"run_{when.strftime('%Y%m%d-%H%M%S')}-dead", "workflow_id": "demo",
-        "outcome": "success", "start_time": when.isoformat(), "dry_run": True,
-    })
-    for i in range(3):
-        _failure(config, "connector refused", minutes=i + 1)
-    assert analysis.consecutive_failures(config, "demo")["count"] == 3
 
 
 def test_the_breaker_trips_at_the_limit(tmp_home, config):

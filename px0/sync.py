@@ -220,7 +220,7 @@ def status(home: Path, remote: Path) -> dict:
             "settled": settled, "unchanged": len(unchanged)}
 
 
-def sync(home: Path, remote: Path, *, dry_run: bool = False,
+def sync(home: Path, remote: Path, *,
          pull_only: bool = False, push_only: bool = False) -> dict:
     """Brings a store and a remote directory into line, keeping both histories.
 
@@ -234,9 +234,6 @@ def sync(home: Path, remote: Path, *, dry_run: bool = False,
     not pulled yet, and treating absence as deletion is how a sync loses work.
     """
     plan = status(home, remote)
-    if dry_run:
-        return {**plan, "applied": False}
-
     manifest = read_manifest(remote)
     mine = manifest["agreed"].setdefault(store_key(home), {})
     done = {"pushed": [], "pulled": [], "conflicts": []}

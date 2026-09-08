@@ -318,13 +318,12 @@ def render_prompt(wf: workflow_mod.Workflow, guideline_texts: dict[str, str],
 
 def _tool_call_loop(
     home: Path, config: dict, prompt: str, allowed_tools: list[str],
-    dry_run: bool, timeout: float, run_id: str, wf=None
+    timeout: float, run_id: str, wf=None
 ) -> tuple[str, list[dict], dict]:
     """Drives the model through up to MAX_TOOL_TURNS turns, feeding it a
     `TOOL_CALL: {...}` protocol line-by-line since the harness backend is a
     plain non-interactive subprocess rather than a real MCP transport. Each
-    call is checked against the workflow's tool allowlist; write tools are
-    stubbed out (never executed) when dry_run is set. Returns the model's
+    call is checked against the workflow's tool allowlist. Returns the model's
     final text output and the list of tool calls actually made, each recorded
     for the run's audit trail, plus what the run cost.
 
@@ -378,7 +377,7 @@ def _tool_call_loop(
 
     runs_mod.append_event(config, run_id, "prompt",
                           prompt_chars=len(conversation),
-                          tools_offered=offered, dry_run=bool(dry_run))
+                          tools_offered=offered)
 
     output = ""
     for turn in range(max_turns):
@@ -451,8 +450,6 @@ def _tool_call_loop(
             runs_mod.append_event(config, run_id, "tool_refused", turn=turn + 1,
                                   tool=tool_id, is_write=is_write,
                                   allowed=list(allowed_tools))
-        elif dry_run and is_write:
-            result = {"stubbed": True, "success": True}  # dry runs never execute side effects
         elif wf is not None and approvals.needs_approval(wf, config, tool_id, is_write):
             # Drafted, not sent. The model is told plainly, so it writes its
             # final answer as though the call will happen rather than reporting
@@ -484,7 +481,6 @@ def _tool_call_loop(
         awaiting = isinstance(result, dict) and result.get("queued_for_approval")
         tool_calls.append({
             "tool": tool_id, "args": args, "is_write": is_write,
-            "stubbed": bool(dry_run and is_write),
             "refused": refused,
             "queued": bool(awaiting),
             "failed": bool(failed),
@@ -495,7 +491,6 @@ def _tool_call_loop(
         runs_mod.append_event(
             config, run_id, "tool_call", turn=turn + 1, tool=tool_id,
             is_write=is_write, refused=refused, failed=bool(failed),
-            stubbed=bool(dry_run and is_write),
             arg_keys=sorted(args.keys()) if isinstance(args, dict) else None,
             elapsed_seconds=round(elapsed, 3),
             error=str(result.get("error"))[:300] if failed else None,
@@ -530,7 +525,7 @@ def agent_loop_mode(config: dict) -> str:
 
 def _agent_loop(
     home: Path, config: dict, prompt: str, allowed_tools: list[str],
-    dry_run: bool, timeout: float, run_id: str, wf
+    timeout: float, run_id: str, wf
 ) -> tuple[str, list[dict], dict]:
     """Hands the workflow's tools to the harness and lets it run its own loop.
 
@@ -540,8 +535,8 @@ def _agent_loop(
     back what was called from the sidecar the scoped server wrote.
 
     The enforcement that used to live in the turn loop moves into that server
-    (`mcp.call_scoped`): the allowlist, dry-run stubbing, held-back writes, and
-    the event stream all still happen, on every call, in one place.
+    (`mcp.call_scoped`): the allowlist, held-back writes, and the event stream
+    all still happen, on every call, in one place.
 
     Raises HarnessError like the builtin loop does, so a failure here reaches
     the same stage-6 handler and is recorded the same way.
@@ -559,7 +554,6 @@ def _agent_loop(
         "reason": getattr(wf, "description", ""),
         "tools": list(allowed_tools),
         "confirm_tools": confirm_tools,
-        "dry_run": bool(dry_run),
         "calls_path": str(calls_path),
     }
     scope_path = scope_dir / "scope.json"
@@ -591,7 +585,7 @@ def _agent_loop(
 
     runs_mod.append_event(config, run_id, "agent_loop_started",
                           tools_offered=list(allowed_tools),
-                          confirm=confirm_tools, dry_run=bool(dry_run))
+                          confirm=confirm_tools)
     runs_mod.append_raw_log(config, run_id, f"--- agent loop PROMPT ---\n{prompt}")
     try:
         reply = harness.invoke_detailed(config, prompt, timeout=timeout,
@@ -647,7 +641,6 @@ def _read_scope_calls(calls_path: Path) -> tuple[list[dict], list[dict]]:
         except json.JSONDecodeError:
             continue
         entry.setdefault("refused", False)
-        entry.setdefault("stubbed", False)
         entry.setdefault("queued", False)
         entry.setdefault("timestamp", _now().isoformat())
         entry["result_summary"] = redact(str(entry.get("result_summary", "")))[:500]
@@ -780,10 +773,14 @@ def route_output(
         if not rel:
             raise RunError("output.target 'guideline' requires output.path")
         if "## " not in text:
-            raise RunError(
-                "a guideline's output must contain `## ` sections; got a run "
-                "whose output has none -- edit the workflow body to ask for "
-                "that shape")
+            # Not necessarily broken: "nothing new to fold in this week" is a
+            # normal answer for a sync job and has no sections of its own.
+            # Failing the run would make that indistinguishable from a real
+            # break in `px0 runs list` and could trip the circuit breaker on a
+            # job that is working exactly as intended -- so leave the existing
+            # guideline untouched and say why nothing was written.
+            return {"target": "guideline", "path": None, "text": text,
+                   "skipped": "no `## ` sections in the output"}
         existing = paths.guidelines_dir(home) / rel
         # The frontmatter description is what a later build matches this file
         # against, and it is meant to be hand-tuned (`px0 guidelines edit`).
@@ -827,7 +824,6 @@ def run(
     workflow_id: str,
     trigger: str = "manual",
     cli_inputs: dict | None = None,
-    dry_run: bool = False,
     output_override: dict | None = None,
     late_scheduled_at: str | None = None,
     timeout_override: str | None = None,
@@ -857,7 +853,7 @@ def run(
         try:
             record = _run_once(
                 home, config, workflow_id, trigger=trigger, cli_inputs=cli_inputs,
-                dry_run=dry_run, output_override=output_override,
+                output_override=output_override,
                 late_scheduled_at=late_scheduled_at, timeout_override=timeout_override,
                 attempt=attempt, attempts=attempts,
             )
@@ -937,7 +933,6 @@ def _run_once(
     workflow_id: str,
     trigger: str = "manual",
     cli_inputs: dict | None = None,
-    dry_run: bool = False,
     output_override: dict | None = None,
     late_scheduled_at: str | None = None,
     timeout_override: str | None = None,
@@ -956,16 +951,12 @@ def _run_once(
     record: dict = {
         "id": run_id, "workflow_id": workflow_id, "trigger": trigger,
         "start_time": start.isoformat(), "late": trigger == "late",
-        # Marked on the record so a rehearsal is never mistaken for the real
-        # thing: `runs list` labels it, and `runs rerun` refuses to replay it as
-        # a live run without being told to.
-        "dry_run": bool(dry_run),
         "attempt": attempt,
         "attempts": attempts,
     }
     runs_mod.mark_running(home, run_id, workflow_id)
     runs_mod.append_event(config, run_id, "run_started", workflow=workflow_id,
-                          trigger=trigger, dry_run=bool(dry_run),
+                          trigger=trigger,
                           attempt=attempt, attempts=attempts)
 
     def fail(message: str, **extra) -> "RunError":
@@ -1008,7 +999,7 @@ def _run_once(
         home, f"workflows/{workflow_id}.md")
 
     if wf.pipeline:
-        return _run_pipeline(home, config, wf, trigger, dry_run, run_id, start, record)
+        return _run_pipeline(home, config, wf, trigger, run_id, start, record)
 
     # Stage 2: lock, checkpoint hand edits, release
     lock = paths.lock_path(home)
@@ -1072,7 +1063,7 @@ def _run_once(
         if use_agent:
             try:
                 output_text, tool_calls, usage = _agent_loop(
-                    home, config, prompt, wf.tools, dry_run, timeout, run_id, wf)
+                    home, config, prompt, wf.tools, timeout, run_id, wf)
             except harness.AgentLoopUnsupported:
                 # `auto` means "where it works"; an explicit 'mcp' means the
                 # user asked for it, and silently running a weaker loop would
@@ -1080,10 +1071,10 @@ def _run_once(
                 if mode == "mcp":
                     raise
                 output_text, tool_calls, usage = _tool_call_loop(
-                    home, config, prompt, wf.tools, dry_run, timeout, run_id, wf=wf)
+                    home, config, prompt, wf.tools, timeout, run_id, wf=wf)
         else:
             output_text, tool_calls, usage = _tool_call_loop(
-                home, config, prompt, wf.tools, dry_run, timeout, run_id, wf=wf
+                home, config, prompt, wf.tools, timeout, run_id, wf=wf
             )
     except harness.HarnessError as e:
         raise fail(str(e), inputs_resolved=inputs_meta,
@@ -1113,7 +1104,7 @@ def _run_once(
                 queued_approvals, wf.on_failure)
     # Delivery is on top of routing, not instead of it: a nightly digest still
     # writes its file, and the inbox is what tells you the file exists.
-    if inbox_mod.should_deliver(config, wf, trigger, dry_run):
+    if inbox_mod.should_deliver(config, wf, trigger):
         entry = inbox_mod.deliver(
             home, config, workflow_id=workflow_id, run_id=run_id,
             text=output_text or "", path=output_info.get("path"), trigger=trigger)
@@ -1164,7 +1155,7 @@ def _stage_should_run(when: str, previous_output: str) -> bool:
 
 def _run_pipeline(
     home: Path, config: dict, wf: workflow_mod.Workflow, trigger: str,
-    dry_run: bool, run_id: str, start: datetime, record: dict
+    run_id: str, start: datetime, record: dict
 ) -> dict:
     """Runs each workflow in wf.pipeline in sequence, piping one stage's
     output text into the next stage's stdin, with only the final stage's
@@ -1176,8 +1167,7 @@ def _run_pipeline(
     stdin_text = ""
     planned = workflow_mod.pipeline_stages(wf)
     runs_mod.append_event(config, run_id, "pipeline_started",
-                          stages=[s["workflow"] for s in planned],
-                          dry_run=bool(dry_run))
+                          stages=[s["workflow"] for s in planned])
     skipped = []
     for i, stage in enumerate(planned):
         stage_id = stage["workflow"]
@@ -1195,7 +1185,7 @@ def _run_pipeline(
         try:
             stage_record = run(
                 home, config, stage_id, trigger="pipeline",
-                cli_inputs={"_stdin": stdin_text}, dry_run=dry_run,
+                cli_inputs={"_stdin": stdin_text},
                 output_override=stage_override, retry=False,
             )
         except RunError as e:
@@ -1227,7 +1217,7 @@ def _run_pipeline(
     # Every reason the inbox exists applies here more than anywhere -- a
     # pipeline is the longest-running thing px0 does and the least likely to
     # have anyone watching when it finishes.
-    if inbox_mod.should_deliver(config, wf, trigger, dry_run):
+    if inbox_mod.should_deliver(config, wf, trigger):
         entry = inbox_mod.deliver(
             home, config, workflow_id=wf.id, run_id=run_id,
             text=final_output.get("text", ""), path=final_output.get("path"),

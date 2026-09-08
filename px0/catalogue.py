@@ -8,7 +8,7 @@ instead of the nearest curated approximation.
 A discovered tool is *cached in the store* rather than looked up again at run
 time. Two reasons: a workflow must keep working offline and unchanged after it
 is written, and read-vs-write has to be knowable without a network call --
-`px0 workflows run --dry-run` decides what to stub from it.
+it decides which calls need the user's approval before they fire.
 
 Read/write comes from Composio's own MCP-style hints in each tool's `tags`:
 `readOnlyHint` means it only reads; its absence means it can change something;

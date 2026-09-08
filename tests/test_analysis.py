@@ -55,7 +55,7 @@ def workflow(tmp_home):
 
 
 def make_run(config, wf_id="demo", *, outcome="success", tool_calls=None,
-             error=None, dry_run=False, output="a fine digest", usage=None,
+             error=None, output="a fine digest", usage=None,
              inputs=None, review=None, attempt=1, seconds=3.0, version=1,
              age_minutes=0):
     """Writes one run record and returns it.
@@ -69,7 +69,7 @@ def make_run(config, wf_id="demo", *, outcome="success", tool_calls=None,
     record = {
         "id": run_id, "workflow_id": wf_id, "trigger": "manual",
         "outcome": outcome, "start_time": when.isoformat(),
-        "duration_seconds": seconds, "dry_run": dry_run, "attempt": attempt,
+        "duration_seconds": seconds, "attempt": attempt,
         "tool_calls": tool_calls or [], "workflow_version": version,
         "output": {"target": "stdout", "text": output},
         "usage": usage or {"estimated": True, "turns": 1},
@@ -83,10 +83,9 @@ def make_run(config, wf_id="demo", *, outcome="success", tool_calls=None,
     return record
 
 
-def call(tool="file.read", failed=False, refused=False, is_write=False,
-         stubbed=False):
+def call(tool="file.read", failed=False, refused=False, is_write=False):
     return {"tool": tool, "is_write": is_write, "failed": failed,
-            "refused": refused, "stubbed": stubbed,
+            "refused": refused,
             "result_summary": "{'error': 'nope'}" if failed else "{'ok': True}",
             "elapsed_seconds": 0.1}
 
@@ -114,13 +113,6 @@ def test_a_workflow_with_no_runs_says_so(tmp_home, config, workflow):
     workflow()
     report = analysis.health(tmp_home, config, "demo")
     assert "no_runs" in codes(report)
-
-
-def test_a_workflow_only_ever_rehearsed_says_so(tmp_home, config, workflow):
-    workflow()
-    for i in range(3):
-        make_run(config, dry_run=True, age_minutes=i)
-    assert "dry_run_only" in codes(analysis.health(tmp_home, config, "demo"))
 
 
 # --- failures -------------------------------------------------------------
@@ -172,15 +164,6 @@ def test_success_with_every_tool_call_erroring_is_a_problem(tmp_home, config, wo
     assert "success_despite_tool_errors" in codes(analysis.health(tmp_home, config, "demo"))
 
 
-def test_a_rehearsal_is_not_mistaken_for_a_run_that_did_nothing(tmp_home, config, workflow):
-    """A dry run stubs its write tools by design; that is not tool failure."""
-    workflow()
-    for i in range(3):
-        make_run(config, dry_run=True, age_minutes=i,
-                 tool_calls=[call(is_write=True, stubbed=True)])
-    assert "success_despite_tool_errors" not in codes(analysis.health(tmp_home, config, "demo"))
-
-
 # --- the allowlist --------------------------------------------------------
 
 def test_a_refused_tool_call_is_always_a_problem(tmp_home, config, workflow):
@@ -224,15 +207,6 @@ def test_a_tool_unused_over_too_few_runs_is_left_alone(tmp_home, config, workflo
     workflow(tools=("file.read", "http.get"))
     for i in range(2):
         make_run(config, tool_calls=[call()], age_minutes=i)
-    assert "dead_tools" not in codes(analysis.health(tmp_home, config, "demo"))
-
-
-def test_a_tool_used_only_in_a_rehearsal_still_counts_as_used(tmp_home, config, workflow):
-    workflow(tools=("file.read", "http.post"))
-    for i in range(6):
-        make_run(config, tool_calls=[call()], age_minutes=i)
-    make_run(config, dry_run=True, age_minutes=99,
-             tool_calls=[call(tool="http.post", is_write=True, stubbed=True)])
     assert "dead_tools" not in codes(analysis.health(tmp_home, config, "demo"))
 
 

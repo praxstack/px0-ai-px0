@@ -21,8 +21,7 @@ px0 inbox clear [--all]
 
 Scheduled and watched runs, by default. Manual ones do not: you were there for
 a manual run and have just read its output, where a nightly one produced
-something at 6am that nothing has told you about. A rehearsal never delivers —
-a dry run's output is a sample, not news.
+something at 6am that nothing has told you about.
 
 A workflow can force either answer:
 

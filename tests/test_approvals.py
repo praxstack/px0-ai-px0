@@ -44,13 +44,13 @@ def loop(tmp_home, config, monkeypatch):
                         lambda home, cfg, tid, args: executed.append((tid, args)) or {"ok": True})
     monkeypatch.setattr(runs_mod, "append_raw_log", lambda *a: None)
 
-    def _run(wf, turns, dry_run=False):
+    def _run(wf, turns):
         script = list(turns)
         monkeypatch.setattr(
             harness, "invoke_detailed",
             lambda *a, **kw: harness.Reply(text=script.pop(0) if script else "Done"))
         out, calls, usage = runner._tool_call_loop(
-            tmp_home, config, "prompt", list(wf.tools), dry_run, 60.0,
+            tmp_home, config, "prompt", list(wf.tools), 60.0,
             "run_20260101-000000-aaaa", wf=wf)
         return {"output": out, "calls": calls, "usage": usage, "executed": executed}
 
@@ -140,15 +140,6 @@ def test_an_unconfirmed_write_still_fires(tmp_home, config, loop):
     wf = _write(tmp_home)
     result = loop(wf, [POST, "Done"])
     assert [t for t, _ in result["executed"]] == ["http.post"]
-    assert approvals.listing(tmp_home, config) == []
-
-
-def test_a_dry_run_stubs_rather_than_queueing(tmp_home, config, loop):
-    """Two different ideas: a rehearsal is not a decision waiting to be made,
-    and filling the queue from one would leave drafts nobody asked to send."""
-    wf = _write(tmp_home, extra="confirm: true\n")
-    result = loop(wf, [POST, "Done"], dry_run=True)
-    assert result["calls"][0]["stubbed"] is True
     assert approvals.listing(tmp_home, config) == []
 
 

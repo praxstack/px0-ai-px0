@@ -140,14 +140,6 @@ def test_a_sync_never_deletes(tmp_home, remote):
     assert (remote / "workflows" / "beta.md").exists()
 
 
-def test_a_dry_run_moves_nothing(tmp_home, remote):
-    _wf(tmp_home, "alpha")
-    result = sync.sync(tmp_home, remote, dry_run=True)
-    assert result["applied"] is False
-    assert result["push"] == ["workflows/alpha.md"]
-    assert not (remote / "workflows").exists()
-
-
 def test_pull_only_sends_nothing(tmp_home, remote):
     _wf(tmp_home, "alpha")
     sync.sync(tmp_home, remote, pull_only=True)

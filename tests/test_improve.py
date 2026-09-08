@@ -46,7 +46,7 @@ def make_run(config, **kw):
         "id": f"run_{when.strftime('%Y%m%d-%H%M%S')}-{abs(hash(str(kw))) % 65536:04x}",
         "workflow_id": "demo", "outcome": kw.pop("outcome", "success"),
         "start_time": when.isoformat(), "duration_seconds": 2.0,
-        "dry_run": False, "attempt": 1, "tool_calls": kw.pop("tool_calls", []),
+        "attempt": 1, "tool_calls": kw.pop("tool_calls", []),
         "output": {"target": "stdout", "text": kw.pop("output", "a digest")},
         "usage": {"estimated": True, "turns": 1}, "inputs_resolved": [],
     }
@@ -263,17 +263,19 @@ def test_the_diff_handles_an_empty_original():
 
 # --- the whole path, through the CLI --------------------------------------
 
-def test_improve_shows_a_proposal_and_applies_nothing_on_dry_run(
+def test_improve_shows_a_proposal_and_applies_nothing_if_the_rebuild_is_declined(
         tmp_home, config, workflow, monkeypatch, capsys, quiet_spinner):
+    """Choosing "cancel" at the rebuild prompt leaves the file untouched."""
     import argparse
-    from px0 import cli
+    from px0 import cli, ui
 
     monkeypatch.setattr(cli, "_ctx", lambda *a, **kw: (tmp_home, config))
     monkeypatch.setattr(harness, "invoke", reply_with(GOOD))
+    monkeypatch.setattr(ui, "select", lambda *a, **kw: 2)  # "cancel"
     make_run(config, age_minutes=1, review={"verdict": "bad", "note": "wrong week"})
 
     cli.cmd_workflows_improve(argparse.Namespace(
-        workflow="demo", since=None, dry_run=True, show_evidence=False,
+        workflow="demo", since=None, show_evidence=False,
         yes=False, no_clarify=False, no_discover=False, json=False))
 
     out = capsys.readouterr().out
@@ -294,7 +296,7 @@ def test_show_evidence_prints_the_case_and_calls_no_model(
     # harness.invoke is refused by the autouse guard, so reaching a model here
     # would fail the test rather than pass it quietly.
     cli.cmd_workflows_improve(argparse.Namespace(
-        workflow="demo", since=None, dry_run=False, show_evidence=True,
+        workflow="demo", since=None, show_evidence=True,
         yes=False, no_clarify=False, no_discover=False, json=False))
 
     case = json.loads(capsys.readouterr().out)
@@ -309,7 +311,7 @@ def test_improve_refuses_when_there_is_nothing_to_learn_from(
     monkeypatch.setattr(cli, "_ctx", lambda *a, **kw: (tmp_home, config))
     with pytest.raises(SystemExit):
         cli.cmd_workflows_improve(argparse.Namespace(
-            workflow="demo", since=None, dry_run=False, show_evidence=False,
+            workflow="demo", since=None, show_evidence=False,
             yes=False, no_clarify=False, no_discover=False, json=False))
     assert "no runs" in capsys.readouterr().err.lower()
 

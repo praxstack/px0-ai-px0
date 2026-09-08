@@ -146,10 +146,9 @@ Before the first turn, the allowlisted tools are described into the conversation
 
 Each turn appends the call and its result back into the conversation and asks the model to continue. When a reply carries no `TOOL_CALL` line, that reply is the answer.
 
-Four things can happen to a requested call:
+Three things can happen to a requested call:
 
 - Refused, because the tool is not in the workflow's allowlist. This branch used to fall through into execution, so the refusal was only a message in the transcript while the call went ahead. The allowlist is the whole of what the user approved when the workflow was built, so it has to be the thing that decides, not a string in the conversation.
-- Stubbed, because this is a dry run and the tool is a write.
 - Queued, because the workflow holds this write for approval. The model is told plainly, so it writes its final answer as though the call will happen rather than reporting a failure the user would then have to interpret.
 - Executed, with retries and a wall-clock measurement.
 
@@ -163,7 +162,7 @@ Falling out of the loop sets `hit_turn_cap` and records a `turn_cap_reached` eve
 
 `_agent_loop` stops being the agent and becomes the tool provider.
 
-It writes a scope file naming this run, its workflow, its allowlisted tools, which of them need approval, and whether this is a dry run. It writes an MCP config pointing at `px0 mcp serve --scope <file>`. It starts the harness once with that config and an allowlist of exactly this workflow's tools. Then it reads back what was called.
+It writes a scope file naming this run, its workflow, its allowlisted tools, and which of them need approval. It writes an MCP config pointing at `px0 mcp serve --scope <file>`. It starts the harness once with that config and an allowlist of exactly this workflow's tools. Then it reads back what was called.
 
 ```python
 server = {"mcpServers": {"px0": {
@@ -175,7 +174,7 @@ server = {"mcpServers": {"px0": {
 
 `sys.executable -m px0.cli` rather than a bare `px0`, because a store driven from a virtualenv or a checkout may have no `px0` on the harness's PATH.
 
-Every enforcement that lived in the turn loop moves into `mcp.call_scoped`: the allowlist, dry-run stubbing, held-back writes, and the event stream. One place, on every call. See [part 15](15-mcp.md).
+Every enforcement that lived in the turn loop moves into `mcp.call_scoped`: the allowlist, held-back writes, and the event stream. One place, on every call. See [part 15](15-mcp.md).
 
 The scoped server runs in a process the harness started, not px0, so the run cannot observe its calls directly. `_read_scope_calls` reads them back from a JSONL sidecar the server appends to. That file is the only account a run has of what its own tools did.
 
@@ -253,7 +252,7 @@ Drafted writes are queued mid-run, before the run has an answer. Once it has one
 
 If the run was not manual, an approval notice is sent. A drafted call waits indefinitely by definition, and nobody was there to see this run happen, so an approval nobody is told about is a message the user believes went out.
 
-Inbox delivery is on top of routing, not instead of it. A nightly digest still writes its file, and the inbox is what tells you the file exists. `inbox.should_deliver` decides: scheduled and watched runs deliver by default, manual ones do not, a dry run never does, and `output.inbox` forces either answer.
+Inbox delivery is on top of routing, not instead of it. A nightly digest still writes its file, and the inbox is what tells you the file exists. `inbox.should_deliver` decides: scheduled and watched runs deliver by default, manual ones do not, and `output.inbox` forces either answer.
 
 ## Stage 8: the record
 

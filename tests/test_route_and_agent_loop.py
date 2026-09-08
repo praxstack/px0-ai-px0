@@ -146,7 +146,7 @@ def test_a_one_off_question_is_not(tmp_home, config):
 
 def _scope(tmp_path, tools_list, **kw):
     scope = {"run_id": "run_20260101-000000-aaaa", "workflow_id": "demo",
-             "tools": list(tools_list), "confirm_tools": [], "dry_run": False,
+             "tools": list(tools_list), "confirm_tools": [],
              "calls_path": str(tmp_path / "calls.jsonl")}
     scope.update(kw)
     return scope
@@ -183,13 +183,6 @@ def test_a_scoped_call_runs_and_is_recorded(tmp_home, config, tmp_path, monkeypa
     recorded = [json.loads(l) for l in
                 (tmp_path / "calls.jsonl").read_text().splitlines()]
     assert recorded[0]["tool"] == "file.read"
-
-
-def test_a_scoped_dry_run_stubs_a_write(tmp_home, config, tmp_path, monkeypatch):
-    monkeypatch.setattr(tools, "call", lambda *a: pytest.fail("dry runs call nothing"))
-    scope = _scope(tmp_path, ["http.post"], dry_run=True)
-    result = mcp.call_scoped(tmp_home, config, scope, "http_post", {"url": "x"})
-    assert "stubbed" in result["content"][0]["text"]
 
 
 def test_a_scoped_held_back_write_is_queued(tmp_home, config, tmp_path, monkeypatch):
