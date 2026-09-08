@@ -302,6 +302,63 @@ def test_a_build_reports_every_path_the_way_a_run_does(
     assert "[OK]" not in out and "✓" not in out, "bullets, not ticks"
 
 
+def test_a_scheduled_build_hints_to_install_the_daemon_when_it_is_not(
+        tmp_home, monkeypatch, capsys):
+    from px0 import builder as builder_mod
+
+    plan = builder_mod.Plan(
+        trigger={"schedule": "0 9 * * 1"}, inputs=[], tools=[], body="do it",
+        description="Summarize today's commits",
+        output={"target": "file", "path": "logs/daily-commits-{{today}}.md"})
+
+    monkeypatch.setattr(cli, "_ctx", lambda: (tmp_home, {}))
+    monkeypatch.setattr(cli.ui, "spinner", _no_spinner)
+    monkeypatch.setattr(cli, "_discover_tools", lambda *a, **k: [])
+    monkeypatch.setattr(cli, "_select_guidelines", lambda *a, **k: [])
+    monkeypatch.setattr(cli, "_author_guidelines", lambda *a, **k: [])
+    monkeypatch.setattr(cli.builder_mod, "generate_plan", lambda *a, **k: plan)
+    monkeypatch.setattr(cli.builder_mod, "check_feasibility", lambda *a, **k: [])
+    monkeypatch.setattr(cli.catalogue_mod, "remember", lambda *a, **k: None)
+    monkeypatch.setattr(cli.daemon_mod, "is_installed", lambda: False)
+
+    args = argparse.Namespace(yes=True, id="weekly-commit-summary",
+                              no_clarify=True, no_discover=True)
+    cli._build_workflow(tmp_home, {}, "summarize this week's commits", args,
+                        existing_id=None, already_clarified=True)
+
+    out = capsys.readouterr().out
+    assert "scheduler isn't installed" in out
+    assert "px0 daemon install" in out
+
+
+def test_a_scheduled_build_says_nothing_when_the_daemon_is_already_installed(
+        tmp_home, monkeypatch, capsys):
+    from px0 import builder as builder_mod
+
+    plan = builder_mod.Plan(
+        trigger={"schedule": "0 9 * * 1"}, inputs=[], tools=[], body="do it",
+        description="Summarize today's commits",
+        output={"target": "file", "path": "logs/daily-commits-{{today}}.md"})
+
+    monkeypatch.setattr(cli, "_ctx", lambda: (tmp_home, {}))
+    monkeypatch.setattr(cli.ui, "spinner", _no_spinner)
+    monkeypatch.setattr(cli, "_discover_tools", lambda *a, **k: [])
+    monkeypatch.setattr(cli, "_select_guidelines", lambda *a, **k: [])
+    monkeypatch.setattr(cli, "_author_guidelines", lambda *a, **k: [])
+    monkeypatch.setattr(cli.builder_mod, "generate_plan", lambda *a, **k: plan)
+    monkeypatch.setattr(cli.builder_mod, "check_feasibility", lambda *a, **k: [])
+    monkeypatch.setattr(cli.catalogue_mod, "remember", lambda *a, **k: None)
+    monkeypatch.setattr(cli.daemon_mod, "is_installed", lambda: True)
+
+    args = argparse.Namespace(yes=True, id="weekly-commit-summary",
+                              no_clarify=True, no_discover=True)
+    cli._build_workflow(tmp_home, {}, "summarize this week's commits", args,
+                        existing_id=None, already_clarified=True)
+
+    out = capsys.readouterr().out
+    assert "scheduler isn't installed" not in out
+
+
 def test_the_output_row_promises_where_a_run_actually_writes(tmp_home):
     """The build's row and the run's destination come from one function."""
     assert runner.output_rel("logs/daily.md") == "output/logs/daily.md"

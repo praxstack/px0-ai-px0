@@ -115,6 +115,28 @@ def test_enable_restores_a_parked_workflow(ctx):
     assert wf_mod.load(home, "demo").enabled is True
 
 
+def test_enabling_a_scheduled_workflow_hints_to_install_the_daemon(ctx, monkeypatch, capsys):
+    home, _config = ctx
+    _workflow(home, enabled=False)
+    monkeypatch.setattr(cli.daemon_mod, "is_installed", lambda: False)
+
+    cli.cmd_workflows_enable(argparse.Namespace(workflow="demo", workflows_cmd="enable"))
+
+    out = capsys.readouterr().out
+    assert "scheduler isn't installed" in out
+    assert "px0 daemon install" in out
+
+
+def test_enabling_a_scheduled_workflow_says_nothing_when_already_installed(ctx, monkeypatch, capsys):
+    home, _config = ctx
+    _workflow(home, enabled=False)
+    monkeypatch.setattr(cli.daemon_mod, "is_installed", lambda: True)
+
+    cli.cmd_workflows_enable(argparse.Namespace(workflow="demo", workflows_cmd="enable"))
+
+    assert "scheduler isn't installed" not in capsys.readouterr().out
+
+
 def test_disabling_twice_is_not_an_error(ctx, capsys):
     home, _config = ctx
     _workflow(home, enabled=False)

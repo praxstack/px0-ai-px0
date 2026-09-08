@@ -928,6 +928,9 @@ def _build_workflow(home: Path, config: dict, description: str,
 
     if guidelines:
         ui.hint("each is inlined verbatim into every run of this workflow")
+    if plan.trigger.get("schedule") and not daemon_mod.is_installed():
+        ui.hint("the scheduler isn't installed, so this won't fire on its own:")
+        ui.command("px0 daemon install")
     if waiting:
         ui.warn("authorization pending", ", ".join(waiting),
                 stream=sys.stdout)
@@ -1654,6 +1657,9 @@ def cmd_workflows_enable(args: argparse.Namespace) -> None:
     schedule = (wf.trigger or {}).get("schedule")
     if schedule and not enable:
         ui.hint(f"it will not fire on {schedule} until you run `px0 workflows enable {args.workflow}`")
+    elif schedule and enable and not daemon_mod.is_installed():
+        ui.hint("the scheduler isn't installed, so this won't fire on its own:")
+        ui.command("px0 daemon install")
     daemon_mod.restart_if_running(home, config)
 
 
