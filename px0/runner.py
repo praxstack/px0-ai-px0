@@ -748,15 +748,23 @@ def _resolve_output_dest(home: Path, rendered: str) -> Path:
 
 
 def route_output(
-    home: Path, output_spec: dict, text: str, note: str | None = None
+    home: Path, output_spec: dict, text: str, note: str | None = None,
+    workflow_id: str | None = None, description: str | None = None,
 ) -> dict:
     """Writes the output where it belongs and returns a description of what
     happened. Does not print: stdout routing is a decision for the CLI
     layer, which also needs plain stdout free for `--json` output.
     File writes are serialized with a store-wide lock to avoid two concurrent
-    runs racing on the same output path."""
+    runs racing on the same output path.
+
+    `workflow_id` and `description` are only used by the `guideline` target,
+    to attribute the write and to seed a first-time file's frontmatter -- see
+    below."""
     target = output_spec.get("target", "stdout")
-    if note:
+    if note and target != "guideline":
+        # A guideline is a durable file, not a dated report; a "ran late"
+        # note belongs on a run record, not baked into every future inlining
+        # of the convention.
         text = f"<!-- {note} -->\n\n{text}"
 
     if target == "memory":
@@ -765,6 +773,36 @@ def route_output(
         # `inbox` carries no destination of its own: the delivery below files
         # it, and the text still comes back so a manual run prints it too.
         return {"target": target, "text": text}
+    if target == "guideline":
+        from px0 import builder as builder_mod  # deferred: builder is the build-time module; a run reaches into it only for this one shared write path
+
+        rel = builder_mod._guideline_path(output_spec.get("path", ""))
+        if not rel:
+            raise RunError("output.target 'guideline' requires output.path")
+        if "## " not in text:
+            raise RunError(
+                "a guideline's output must contain `## ` sections; got a run "
+                "whose output has none -- edit the workflow body to ask for "
+                "that shape")
+        existing = paths.guidelines_dir(home) / rel
+        # The frontmatter description is what a later build matches this file
+        # against, and it is meant to be hand-tuned (`px0 guidelines edit`).
+        # Set it from the workflow the first time the file is written; every
+        # run after that keeps whatever is on disk rather than stamping the
+        # same generic line back over an edit.
+        if existing.exists():
+            saved_description = guidelines_mod.parse(existing, rel).description
+        else:
+            saved_description = ""
+        actor = f"run:{workflow_id}" if workflow_id else "run"
+        evidence = (f"written by a run of {workflow_id}" if workflow_id
+                   else "written by a workflow run")
+        dest = builder_mod.save_guideline(
+            home, rel, text,
+            description=saved_description or output_spec.get("description") or description or "",
+            actor=actor, evidence=evidence)
+        rel_out = str(dest.relative_to(home)) if dest.is_relative_to(home) else str(dest)
+        return {"target": "guideline", "path": rel_out, "text": text}
     if target == "file":
         path_template = output_spec.get("path", "output/output-{date}.md")
         rendered = output_rel(_render_output_path(path_template))
@@ -1057,7 +1095,8 @@ def _run_once(
     note = None
     if late_scheduled_at:
         note = f"scheduled {late_scheduled_at}, ran {_now().strftime('%H:%M')}"
-    output_info = route_output(home, effective_output, output_text, note)
+    output_info = route_output(home, effective_output, output_text, note,
+                               workflow_id=workflow_id, description=wf.description)
     # The drafts this run queued were written before it had an answer; now it
     # has one, and that is what a person needs in order to judge them.
     queued_approvals = usage.get("approvals") or []

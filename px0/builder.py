@@ -425,13 +425,27 @@ def generate_plan(config: dict, description: str,
         "timestamp -- because a scheduled run cannot use a literal date), "
         '"tools" (list of tool ids the model may call during the run, for '
         "actions like posting -- include a write tool here, never in inputs), "
-        '"output" ({"target": "stdout"|"file", "path": templated path if file -- '
-        "its only placeholders are the clock ones: {{today}}, {{date}}, {{now}}, "
-        "{{datetime}}, {{time}}, {{now-<N><unit>}}; anything else in braces is an "
-        'error, so never put an input id in a path}) -- '
-        'if trigger.schedule is set, target MUST be "file" with a path, since '
-        "nobody is watching stdout for a run that fires on a cron, even when "
-        "the body also posts somewhere via a tool call, "
+        '"output" ({"target": "stdout"|"file"|"guideline", "path": templated path '
+        "if file -- its only placeholders are the clock ones: {{today}}, {{date}}, "
+        "{{now}}, {{datetime}}, {{time}}, {{now-<N><unit>}}; anything else in "
+        'braces is an error, so never put an input id in a path}) -- '
+        'if trigger.schedule is set, target MUST be "file" or "guideline" with a '
+        "path, since nobody is watching stdout for a run that fires on a cron, "
+        "even when the body also posts somewhere via a tool call. "
+        'Use target "guideline" ONLY when the request itself is to derive, '
+        "compile, or maintain a durable convention -- a rubric, a style, a set "
+        "of practices -- as the thing the workflow produces, not merely a report "
+        "that touches the same subject. When you do, \"path\" is a bare "
+        '<kebab-case>.md or <folder>/<kebab-case>.md under px0\'s guidelines '
+        "store (no clock placeholders -- it names one durable file every run "
+        'updates), and "output" must also carry "description": one sentence '
+        "saying what the guideline covers and when a future workflow should "
+        "follow it, phrased so a later workflow can be matched against it. A "
+        'guideline-target workflow\'s "body" must additionally instruct the '
+        "model to answer in px0's guideline shape: two to five `## ` sections, "
+        "each a short prescriptive heading (\"Flag only real breakage\", not "
+        "\"Breakage\") with two or three lines of plain prose under it, no "
+        "preamble and no top-level title, "
         '"body" (the instruction text the model receives at run time; reference '
         "each input by {{input_id}}. A run has nobody to answer questions, so "
         "NEVER write a step that asks the user for a value or stops until they "
@@ -543,9 +557,10 @@ def check_feasibility(plan: Plan, home: Path) -> list[str]:
         # `workflow.validate` enforces that at run time regardless of what the
         # body's tool calls post elsewhere -- catch it here instead of letting
         # the build succeed and the first scheduled run fail.
-        if plan.output.get("target") not in (None, "file"):
-            issues.append("a scheduled workflow's output.target must be 'file' "
-                          "(add output.path -- posting via a tool call doesn't satisfy this)")
+        if plan.output.get("target") not in (None, "file", "guideline"):
+            issues.append("a scheduled workflow's output.target must be 'file' or "
+                          "'guideline' (add output.path -- posting via a tool call "
+                          "doesn't satisfy this)")
 
     return issues
 
@@ -796,7 +811,8 @@ def draft_guideline(config: dict, proposal: GuidelineProposal, description: str,
 
 
 def save_guideline(home: Path, rel_path: str, body: str, description: str = "",
-                   actor: str = "builder") -> Path:
+                   actor: str = "builder",
+                   evidence: str = "drafted during `px0 workflows new`") -> Path:
     """Writes a new guideline file and records it as a versioned guideline change.
 
     The file gets `name`/`description` frontmatter over the drafted rules, which
@@ -837,8 +853,7 @@ def save_guideline(home: Path, rel_path: str, body: str, description: str = "",
     dest.write_text(content)
     claims.capture_guideline_change(
         home, actor,
-        [versioning.FileChange(f"guidelines/{rel_path}", content.encode(),
-                               "drafted during `px0 workflows new`")],
+        [versioning.FileChange(f"guidelines/{rel_path}", content.encode(), evidence)],
     )
     return dest
 

@@ -4,11 +4,14 @@ Guidelines are Markdown files describing how you work — how you word a commit
 message, what your Go reviews check. Workflows inline them verbatim, so output
 comes back in your voice instead of the model's default.
 
-You do not create them. `px0 workflows new` decides whether the workflow it is
-building leans on a durable convention the store has no file for, drafts it, and
-lists it on the workflow — see
-[guidelines the build writes](workflows.md#guidelines-the-build-writes). What is
-here are the operations on a file that already exists.
+You do not create them by hand. There are two ways one comes to exist:
+`px0 workflows new` may decide the workflow it is building leans on a durable
+convention the store has no file for, and draft it — see
+[guidelines the build writes](workflows.md#guidelines-the-build-writes) — or a
+workflow whose own job is to compile or maintain a convention can target one
+directly with `output: {target: guideline}` — see
+[where the output goes](workflows.md#where-the-output-goes). What is here are
+the operations on a file that already exists.
 
 Implemented by `px0/guidelines.py` (the file format), `px0/authoring.py` (the
 files) and `px0/claims.py` (claim identity and history).

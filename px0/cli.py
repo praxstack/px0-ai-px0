@@ -914,6 +914,10 @@ def _build_workflow(home: Path, config: dict, description: str,
         # and today's date would be the wrong name tomorrow.
         rows.append(("output",
                      paths.display(runner.output_destination(home, plan.output["path"]))))
+    if plan.output.get("target") == "guideline" and plan.output.get("path"):
+        rel = builder_mod._guideline_path(plan.output["path"])
+        if rel:
+            rows.append(("output", paths.display(paths.guidelines_dir(home) / rel)))
     if selected:
         rows.append(("tools", [t.id for t in selected]))
     # Bullets rather than ticks, as in a run's own block: these are the workflow's

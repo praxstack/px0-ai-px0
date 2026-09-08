@@ -482,10 +482,12 @@ def _validate_watch(wf: "Workflow", home: Path) -> list[str]:
                 errors.append(f"trigger.watch.every must be at least {MIN_WATCH_SECONDS}s")
         except ValueError:
             errors.append(f"trigger.watch.every {every!r} is not a duration like '15m'")
-    if wf.output.get("target") not in (None, "file", "inbox"):
+    if wf.output.get("target") not in (None, "file", "inbox", "guideline"):
         # The rule exists because nobody is watching stdout when a poll fires.
-        # An inbox delivery answers that as well as a file does.
-        errors.append("a watched workflow's output.target must be 'file' or 'inbox'")
+        # An inbox delivery, or a refreshed guideline file, answers that as
+        # well as a plain file does.
+        errors.append(
+            "a watched workflow's output.target must be 'file', 'inbox', or 'guideline'")
     return errors
 
 
@@ -777,12 +779,13 @@ def validate(wf: Workflow, home: Path) -> list[str]:
             croniter(schedule)
         except (ValueError, KeyError) as e:
             errors.append(f"trigger.schedule {schedule!r} is not a valid cron expression: {e}")
-        if wf.output.get("target") not in (None, "file", "inbox"):
+        if wf.output.get("target") not in (None, "file", "inbox", "guideline"):
             # The rule exists because nobody is watching stdout at 6am. An
             # inbox delivery answers that as well as a file does -- better,
-            # since it also says the output arrived.
+            # since it also says the output arrived. A guideline refresh is
+            # the same shape: a durable file a cron run updates in place.
             errors.append(
-                "a scheduled workflow's output.target must be 'file' or 'inbox'")
+                "a scheduled workflow's output.target must be 'file', 'inbox', or 'guideline'")
 
     errors.extend(_validate_watch(wf, home))
     errors.extend(_validate_confirm(wf, home))
@@ -793,11 +796,21 @@ def validate(wf: Workflow, home: Path) -> list[str]:
         errors.append("capture: must be true or false")
 
     target = wf.output.get("target")
-    if target and target not in ("stdout", "file", "inbox"):
+    if target and target not in ("stdout", "file", "inbox", "guideline"):
         errors.append(
-            f"output.target must be 'stdout', 'file', or 'inbox', got {target!r}")
+            f"output.target must be 'stdout', 'file', 'inbox', or 'guideline', got {target!r}")
     if target == "file" and not wf.output.get("path"):
         errors.append("output.target 'file' requires output.path")
+    if target == "guideline":
+        if not wf.output.get("path"):
+            errors.append("output.target 'guideline' requires output.path")
+        elif re.search(r"[{}]", wf.output["path"]):
+            # A guideline is one durable file a run updates in place, not one
+            # per run -- the clock placeholders `file` accepts would produce a
+            # new, unfindable file every time instead of a growing history.
+            errors.append(
+                "output.target 'guideline' can't use placeholders in path -- "
+                "it names one durable file that every run updates")
 
     return errors
 

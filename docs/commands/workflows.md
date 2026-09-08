@@ -933,7 +933,7 @@ Frontmatter fields, beyond what the build writes for you.
 | `enabled` | `false` parks the workflow: it keeps its file and history, and never fires. Set by `disable`/`enable` |
 | `retry` | `{max_attempts: N, backoff_seconds: S}`. Each attempt writes its own run record; the cap is 10 |
 | `on_failure` | `{notify: desktop\|tool\|none, channel: <tool id>, target: <where>}`. Overrides the `notify.*` config for this workflow |
-| `trigger.schedule` | A cron expression. A scheduled workflow's `output.target` must be `file` |
+| `trigger.schedule` | A cron expression. A scheduled workflow's `output.target` must be `file`, `inbox`, or `guideline` |
 | `trigger.watch` | `{tool: <read-only tool>, args: {...}, key: <field>, every: 15m}`. Polls the tool and runs when an item it has not seen before appears |
 | `timeout` | A duration. Overridden for one run by `--timeout` |
 | `vars` | The values this workflow has to be given before it can run. Written by [`templatize`](#px0-workflows-templatize) |
@@ -1017,10 +1017,35 @@ output:
   inbox: true            # write the file *and* say it arrived
 ```
 
-`stdout`, `file`, and `inbox` are the three targets. A scheduled or watched
-workflow must use `file` or `inbox`, because nobody is watching a terminal at
-6am — and scheduled runs deliver to the inbox automatically unless
-`inbox: false` says otherwise.
+`stdout`, `file`, `inbox`, and `guideline` are the four targets. A scheduled or
+watched workflow must use `file`, `inbox`, or `guideline`, because nobody is
+watching a terminal at 6am — and scheduled runs deliver to the inbox
+automatically unless `inbox: false` says otherwise.
+
+```yaml
+output:
+  target: guideline
+  path: pr-review.md     # a bare name, or one folder deep: code-review/go.md
+  description: What I check in a PR review. Use when the workflow reviews code.
+```
+
+For a workflow whose *job* is to compile or maintain a durable convention —
+"go through my PR reviews and write down the practices I follow" — rather than
+one that merely reports on something. The run's output is written through the
+same path a build uses to draft a guideline: `guidelines/<path>`, versioned,
+with `name`/`description` frontmatter, so `px0 guidelines edit`, `show`, and
+`log` all work on it immediately. It is not listed on the workflow's own
+`guidelines:` — that field is for guidelines a workflow *follows*; a workflow
+whose output is a guideline is edited into your `guidelines:` list on some
+other, ordinary workflow once you're happy with it, the same as any other file
+in the store.
+
+The body must be written for this shape: two to five `## ` sections, each a
+short prescriptive heading with a line or two of prose under it — the same
+shape `px0 workflows new` asks for when it drafts one. `output.description` is
+only used the first time the file is written; a rerun refreshes the rules but
+never overwrites a description you've since hand-edited, since that line is
+what a later build matches the file against.
 
 ### Pipelines that can skip a stage
 

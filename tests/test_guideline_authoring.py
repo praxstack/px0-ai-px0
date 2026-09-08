@@ -358,3 +358,110 @@ def test_a_guideline_without_frontmatter_is_listed_by_its_first_rule(
 def test_an_empty_store_says_where_guidelines_come_from(tmp_home, capsys):
     cli._print_guidelines(tmp_home, heading=False)
     assert "px0 workflows new" in capsys.readouterr().out
+
+
+# --- output.target: "guideline" -- a workflow whose job is to WRITE one -----
+#
+# The build-time authoring above covers a workflow that needs a convention to
+# judge its own output against. The opposite case -- a workflow whose whole
+# point is to derive or maintain the convention itself, e.g. "go through my PR
+# reviews and compile the practices I follow" -- has nowhere to put its answer:
+# `propose_guidelines` explicitly declines anything that only reads or reports
+# on a subject, and the only output targets were `stdout`/`file`/`inbox`, none
+# of which is the versioned, frontmatter-carrying shape a guideline is. This
+# output target closes that gap: the run's own text becomes a guideline file,
+# written through the same `save_guideline` path a build uses.
+
+def _guideline_wf(home, wf_id="pr-practices", target_line="  target: guideline",
+                  path_line="  path: pr-review.md", extra_output="", trigger=""):
+    lines = ["---", f"id: {wf_id}", "description: Compile PR review practices",
+             *(trigger.rstrip("\n").split("\n") if trigger else []),
+             "output:", target_line, path_line]
+    if extra_output:
+        lines.extend(extra_output.rstrip("\n").split("\n"))
+    lines += ["---", "", "Body.", ""]
+    (paths.workflows_dir(home) / f"{wf_id}.md").write_text("\n".join(lines))
+    return wf_mod.load(home, wf_id)
+
+
+def test_workflow_validate_accepts_a_guideline_target(tmp_home):
+    assert wf_mod.validate(_guideline_wf(tmp_home), tmp_home) == []
+
+
+def test_workflow_validate_requires_a_path_for_guideline_target(tmp_home):
+    wf = _guideline_wf(tmp_home, path_line="  description: x")
+    assert any("requires output.path" in e for e in wf_mod.validate(wf, tmp_home))
+
+
+def test_workflow_validate_rejects_placeholders_in_a_guideline_path(tmp_home):
+    wf = _guideline_wf(tmp_home, path_line='  path: "pr-review-{{today}}.md"')
+    assert any("placeholders" in e for e in wf_mod.validate(wf, tmp_home))
+
+
+def test_a_scheduled_workflow_may_target_guideline(tmp_home):
+    wf = _guideline_wf(tmp_home, trigger="trigger:\n  schedule: '0 6 * * 1'")
+    assert wf_mod.validate(wf, tmp_home) == []
+
+
+def test_a_watched_workflow_may_target_guideline(tmp_home):
+    wf = _guideline_wf(
+        tmp_home,
+        trigger="trigger:\n  watch:\n    tool: github.list_my_prs\n    every: 15m")
+    assert wf_mod.validate(wf, tmp_home) == []
+
+
+def test_a_scheduled_plan_targeting_guideline_passes_feasibility(tmp_home):
+    plan = builder_mod.Plan(
+        trigger={"schedule": "0 6 * * 1"}, inputs=[], tools=[],
+        output={"target": "guideline", "path": "pr-review.md"},
+        body="b", description="d")
+    assert builder_mod.check_feasibility(plan, tmp_home) == []
+
+
+def test_route_output_guideline_writes_a_versioned_guideline_file(tmp_home):
+    body = "## Flag only real breakage\n\nOnly production breakage, never style.\n"
+
+    res = runner.route_output(
+        tmp_home, {"target": "guideline", "path": "pr-review.md",
+                  "description": "What I check in a PR review."},
+        body, workflow_id="pr-practices")
+
+    assert res == {"target": "guideline", "path": "guidelines/pr-review.md", "text": body}
+    g = guidelines_mod.parse(paths.guidelines_dir(tmp_home) / "pr-review.md", "pr-review.md")
+    assert g.description == "What I check in a PR review."
+    assert "Only production breakage" in g.body
+    versions = versioning.list_versions(tmp_home, "guidelines/pr-review.md")
+    assert len(versions) == 1 and versions[0]["actor"] == "run:pr-practices"
+    assert claims.guidelines_log(tmp_home, "guidelines/pr-review.md#flag-only-real-breakage")
+
+
+def test_route_output_guideline_requires_headed_sections(tmp_home):
+    with pytest.raises(runner.RunError, match="## "):
+        runner.route_output(tmp_home, {"target": "guideline", "path": "x.md"},
+                            "Just a paragraph, no heading.")
+
+
+def test_route_output_guideline_requires_a_path(tmp_home):
+    with pytest.raises(runner.RunError, match="output.path"):
+        runner.route_output(tmp_home, {"target": "guideline"}, "## H\n\nb\n")
+
+
+def test_route_output_guideline_preserves_a_hand_edited_description_on_rerun(tmp_home):
+    """The frontmatter description is what a later build matches this guideline
+    against, and it is meant to be tuned by hand -- a rerun that quietly
+    stamped the workflow's own description back over an edit would silently
+    undo that every time the workflow fires again."""
+    runner.route_output(
+        tmp_home, {"target": "guideline", "path": "pr-review.md", "description": "generic"},
+        "## H\n\nb\n", workflow_id="pr-practices")
+    dest = paths.guidelines_dir(tmp_home) / "pr-review.md"
+    dest.write_text(guidelines_mod.render(
+        "pr-review", "What a review comments on. Use when reviewing PRs.", "## H\n\nb\n"))
+
+    runner.route_output(
+        tmp_home, {"target": "guideline", "path": "pr-review.md", "description": "generic"},
+        "## H2\n\nb2\n", workflow_id="pr-practices")
+
+    g = guidelines_mod.parse(dest, "pr-review.md")
+    assert g.description == "What a review comments on. Use when reviewing PRs."
+    assert "b2" in g.body, "the content still refreshes"
