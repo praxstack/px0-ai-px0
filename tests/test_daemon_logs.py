@@ -1,7 +1,50 @@
+import subprocess
 import time
 import argparse
+from pathlib import Path
 from unittest.mock import MagicMock
 from px0 import daemon as daemon_mod, runs as runs_mod, cli, paths, config as config_mod
+
+
+def _no_managed_crontab(monkeypatch):
+    monkeypatch.setattr(subprocess, "run",
+                         lambda *a, **k: MagicMock(stdout=""))
+
+
+def test_is_installed_false_with_nothing_in_place(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _no_managed_crontab(monkeypatch)
+
+    assert daemon_mod.is_installed() is False
+
+
+def test_is_installed_true_with_a_systemd_unit(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _no_managed_crontab(monkeypatch)
+    unit_dir = tmp_path / ".config" / "systemd" / "user"
+    unit_dir.mkdir(parents=True)
+    (unit_dir / "px0d.service").write_text("[Unit]\n")
+
+    assert daemon_mod.is_installed() is True
+
+
+def test_is_installed_true_with_a_launchd_plist(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _no_managed_crontab(monkeypatch)
+    plist_dir = tmp_path / "Library" / "LaunchAgents"
+    plist_dir.mkdir(parents=True)
+    (plist_dir / "sh.px0.daemon.plist").write_text("<plist/>")
+
+    assert daemon_mod.is_installed() is True
+
+
+def test_is_installed_true_with_a_managed_crontab(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(subprocess, "run",
+                         lambda *a, **k: MagicMock(stdout="# BEGIN px0-managed\n...\n"))
+
+    assert daemon_mod.is_installed() is True
+
 
 def test_log_event_writes_to_daemon_log(tmp_home):
     config = {"logs": {"path": str(tmp_home / "logs")}}

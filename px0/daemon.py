@@ -598,6 +598,26 @@ def install(home: Path, fallback_cron: bool = False) -> dict:
                                   "no background ingest queue"}
 
 
+def is_installed() -> bool:
+    """Whether a scheduler unit is in place: the launchd plist, the systemd user
+    unit, or a px0-managed crontab block. Distinct from `status()["alive"]` --
+    a unit can be installed but not currently running, and vice versa right
+    after a crash."""
+    plist_path = Path("~/Library/LaunchAgents/sh.px0.daemon.plist").expanduser()
+    if plist_path.exists():
+        return True
+    unit_path = Path("~/.config/systemd/user/px0d.service").expanduser()
+    if unit_path.exists():
+        return True
+    try:
+        listing = subprocess.run(["crontab", "-l"], capture_output=True, text=True, check=False)
+        if "px0-managed" in (listing.stdout or ""):
+            return True
+    except (OSError, FileNotFoundError):
+        pass
+    return False
+
+
 def uninstall(home: Path) -> dict:
     """Removes whatever `install` put in place, and stops the daemon if it is running.
 
