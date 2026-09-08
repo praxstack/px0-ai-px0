@@ -564,6 +564,17 @@ def test_clarify_drives_at_the_same_checklist(monkeypatch):
     assert builder_mod.WORKFLOW_SPEC in seen["p"]
 
 
+def test_the_spec_does_not_send_a_guideline_workflow_house_hunting():
+    """A request to compile or maintain a convention -- "write down the
+    practices I follow reviewing PRs" -- has a delivery: px0's own guidelines
+    store. Before this line existed, THE DELIVERY only named external
+    destinations (a channel, a file, a ticket), so the interview treated the
+    destination as unresolved and asked the user which repo file to use for
+    something px0 names and saves itself."""
+    assert "guidelines store" in builder_mod.WORKFLOW_SPEC
+    assert "never ask where to put it" in builder_mod.WORKFLOW_SPEC
+
+
 def test_intake_loop_asks_until_the_request_is_written(monkeypatch, capsys):
     steps = [{"question": "Which repository?"},
              {"question": "How often?"},

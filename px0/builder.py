@@ -52,7 +52,11 @@ WORKFLOW_SPEC = """\
 2. THE SOURCES -- what it reads: which service, account, repository, channel,
    folder, or the user's own notes. The specific one, not the category.
 3. THE DELIVERY -- what it produces and where that goes: a message to a named
-   channel, a file, a ticket, or output printed for the user to read.
+   channel, a file, a ticket, output printed for the user to read, or -- when
+   the job is to derive or maintain a durable convention/rubric/practice list
+   rather than report on something -- px0's own guidelines store. That last
+   case needs no repo or file path from the user: px0 names and saves the file
+   itself, so never ask where to put it.
 4. THE CADENCE -- when it runs: on demand, on a schedule (say when), or when
    something happens (say what).
 5. DONE LOOKS LIKE -- what makes the output right rather than merely produced:
