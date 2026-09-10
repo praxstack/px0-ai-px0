@@ -149,6 +149,12 @@ _SUFFIX_KINDS: dict[str, tuple[str, str]] = {
     # A saved web page is a local file, not a URL, so it needs its own route.
     ".html": ("html", "blogs"),
     ".htm": ("html", "blogs"),
+    # Audio & meeting recordings: transcribed locally via Whisper into work/
+    ".wav": ("audio", "work"),
+    ".mp3": ("audio", "work"),
+    ".m4a": ("audio", "work"),
+    ".ogg": ("audio", "work"),
+    ".flac": ("audio", "work"),
 }
 
 
@@ -401,6 +407,53 @@ def _extract_document(path: Path) -> str:
             "legacy .doc needs pandoc (install pandoc), or re-save the file as .docx"
         )
     return _extract_zip_xml_document(path)
+
+
+def _extract_audio(path: Path) -> tuple[str, str]:
+    """Transcribes an audio or meeting recording file into text using faster-whisper.
+    Returns (title, markdown_body).
+    """
+    if not path.is_file():
+        raise IngestError(f"no such file: {path}")
+
+    from px0 import audio as audio_mod
+
+    # If it's not a 16kHz mono WAV, convert it temporarily via ffmpeg
+    wav_path = path
+    temp_wav = None
+    if path.suffix.lower() != ".wav":
+        tmp_fd, temp_wav_str = tempfile.mkstemp(suffix=".wav")
+        os.close(tmp_fd)
+        temp_wav = Path(temp_wav_str)
+        conv = subprocess.run(
+            ["ffmpeg", "-y", "-i", str(path), "-ar", "16000", "-ac", "1", str(temp_wav)],
+            capture_output=True,
+            text=True,
+        )
+        if conv.returncode != 0:
+            if temp_wav.exists():
+                temp_wav.unlink()
+            raise IngestError(f"ffmpeg audio conversion failed for {path}: {conv.stderr.strip()[:200]}")
+        wav_path = temp_wav
+
+    try:
+        segments, lang = audio_mod.transcribe_audio(wav_path)
+    except Exception as e:
+        raise IngestError(f"transcription failed for {path}: {e}") from e
+    finally:
+        if temp_wav and temp_wav.exists():
+            temp_wav.unlink()
+
+    title = path.stem.replace("-", " ").replace("_", " ").title()
+    transcript_lines = []
+    for s in segments:
+        ts = audio_mod.format_timestamp(s.start)
+        transcript_lines.append(f"**[{ts}]** {s.text}")
+
+    full_transcript = "\n\n".join(transcript_lines) if transcript_lines else "_No speech detected._"
+    body = f"# {title}\n\n## Transcript\n\n{full_transcript}"
+    return title, body
+
 
 
 # Path-style YouTube URLs: the id is the segment after the marker rather than a
@@ -687,6 +740,13 @@ def add(
             write_file(dest, header, f"# {title}\n\nNo transcript is available for this video yet. "
                                       f"Run `px0 brain refresh {dest}` later to check again.")
             is_stub = True
+    elif kind == "audio":
+        src_path = Path(source).expanduser()
+        title, body = _extract_audio(src_path)
+        header = {"source": str(src_path), "retrieved": today, "kind": "work", "title": title}
+        dest = _dest_path(home, config, folder, source)
+        write_file(dest, header, body)
+        is_stub = False
     else:
         raise IngestError(f"unhandled kind: {kind}")
 

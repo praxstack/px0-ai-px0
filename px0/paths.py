@@ -55,6 +55,12 @@ def outputs_dir(home: Path | None = None) -> Path:
     return output_dir(home)
 
 
+def meetings_dir(home: Path | None = None) -> Path:
+    """Path to the meetings recording folder under `home` (or the default store)."""
+    return (home or store_home()) / "meetings"
+
+
+
 def tools_dir(home: Path | None = None) -> Path:
     """Where user-declared tools live: one TOML file per tool."""
     return (home or store_home()) / "tools"

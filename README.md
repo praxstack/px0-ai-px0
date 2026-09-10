@@ -456,6 +456,24 @@ px0 config set brain.private_folder ""            # nothing is held back
 px0 config set brain.private_folder px0-private   # hold back this folder instead
 ```
 
+### Live Meeting Recording & Auto-Activation
+
+px0 can record live meetings (Google Meet, Zoom, Microsoft Teams) directly on your machine, transcribing both speaker audio and your microphone locally:
+
+```shell
+# Manual recording:
+px0 brain record --title "Sprint Planning"
+
+# Automatic activation daemon (pairs with the Chrome extension):
+px0 brain listen
+```
+
+- **Audio stored locally**: Audio is saved to `~/.px0/meetings/`.
+- **Private by default**: Transcripts are filed into `brain/work/` and indexed into your knowledge base.
+- **Browser Auto-Trigger**: Load the unpacked extension from `extensions/chrome-meet-trigger/` in Chrome to auto-activate recording when you join a meeting call and auto-stop when you leave.
+- **Search & Ask**: Query what was discussed using `px0 brain ask "What was decided in the sprint planning?"`.
+
+
 ## Reaching this machine, and your own tools
 
 Beyond the apps Composio brokers, a workflow can use what is already on your

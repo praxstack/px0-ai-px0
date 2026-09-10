@@ -437,6 +437,20 @@ def build(handlers) -> argparse.ArgumentParser:
                     help="read sources from a file, one per line, and ingest all of them")
     kp.set_defaults(func=handlers.cmd_brain)
 
+    kp = brain_sub.add_parser("record", help="record live meeting audio and index into brain")
+    kp.add_argument("--title", default=None, help="title for the meeting note")
+    kp.add_argument("--model", default="base.en", help="faster-whisper model size (default: base.en)")
+    kp.add_argument("--to", default="work", help="subfolder of the brain to file into (default: work)")
+    kp.set_defaults(func=handlers.cmd_brain_record)
+
+    kp = brain_sub.add_parser("listen", help="start background HTTP listener for browser meeting auto-triggers")
+    kp.add_argument("--port", type=int, default=8765, help="HTTP port (default: 8765)")
+    kp.add_argument("--host", default="127.0.0.1", help="HTTP host (default: 127.0.0.1)")
+    kp.add_argument("--model", default="base.en", help="faster-whisper model size (default: base.en)")
+    kp.set_defaults(func=handlers.cmd_brain_listen)
+
+
+
     kp = brain_sub.add_parser("refresh", help="re-fetch an already-ingested source")
     kp.add_argument("path", nargs="?", help="brain file; omit with --all or --stale")
     kp.add_argument("--all", action="store_true", help="re-fetch everything that records a source")
