@@ -51,7 +51,7 @@ Summarize `{{prs}}` into a short digest, then post it to #eng-standup.
 | `vars` | `list[dict]` | Values a run has to be given before it can start |
 | `inputs` | `list[InputSpec]` | Context gathered before the prompt runs |
 | `tools` | `list[str]` | What the model may call during the run |
-| `output` | `dict` | `target`, `path`, `inbox` |
+| `output` | `dict` | `target`, `path`, `inbox`, `attention` |
 | `timeout` | `str` | Per-model-call ceiling, default `120s` |
 | `pipeline` | `list` | Stages, when this workflow is a pipeline |
 | `body` | `str` | Everything after the frontmatter: the prompt |
@@ -135,6 +135,7 @@ The same function runs over a plan the builder has not saved yet and over a work
 | A `vars[]` entry must be referenced by something a run renders | Otherwise it is a knob the file advertises and no run reads, so the installer supplies a value and watches it change nothing |
 | A scheduled or watched workflow cannot have a required var | Nothing passes `--input` to an unattended fire, so it would not run badly, it would fail every time, at 6am, having looked valid when it was written |
 | `output.path` may only use clock placeholders | The path is rendered after the model call, so a typo would otherwise be found at the most expensive possible moment |
+| `output.attention`, if set, must be `fyi` or `needs_action` | It drives which panel the inbox dashboard sorts an entry into; a third value would sort into neither |
 
 `output_path_errors` is the last one, and it exists because of when the path is rendered. A run resolves `output.path` in stage 7, after the model has already been paid for. Checking it at validation time turns "a failed run" into "a workflow that could never have succeeded", which is a different and more useful message.
 

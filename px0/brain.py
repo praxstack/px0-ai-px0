@@ -623,8 +623,9 @@ def add(
             # Otherwise the first-page cap looks like px0 losing videos.
             hint = (f"; only the first ~{PLAYLIST_FIRST_PAGE_LIMIT} videos are "
                     f"reachable without yt-dlp installed")
+        from px0 import daemon as daemon_mod
         raise IngestError(
-            f"playlist queued at {job_path}; run `px0 daemon start` to process it "
+            f"playlist queued at {job_path}; run `{daemon_mod.START_COMMAND}` to process it "
             f"in the background, or ingest individual video URLs directly{hint}"
         )
 

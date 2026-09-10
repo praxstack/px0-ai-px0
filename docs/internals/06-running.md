@@ -254,6 +254,12 @@ If the run was not manual, an approval notice is sent. A drafted call waits inde
 
 Inbox delivery is on top of routing, not instead of it. A nightly digest still writes its file, and the inbox is what tells you the file exists. `inbox.should_deliver` decides: scheduled and watched runs deliver by default, manual ones do not, and `output.inbox` forces either answer.
 
+An entry that is delivered carries two more things, computed at the point of delivery rather than typed by the workflow author:
+
+`source` is which app the run is about, for grouping entries in the web dashboard's needs-action view. `inbox.infer_source` reads it from the run's own `tool_calls` -- what actually happened, not merely what the workflow declares -- tallying each call's resolved `ToolSpec.provider` and taking the most common. A run that made no tool calls falls back to what the workflow declares (`tools`, then `inputs`), and a workflow that touches no external app at all is filed under `"px0"`.
+
+`attention` is whether the entry is `fyi` (a status digest, the default) or `needs_action` (something specific is waiting on the user). This one is not inferred -- whether a run's output is worth acting on is a judgment about intent that no tool id carries -- so it comes straight from the workflow's own `output.attention`, set by hand or by the builder when the request reads as "show me what needs me" rather than "tell me what happened". The web dashboard's Needs Action view (`px0/web/views.py:render_needs_action`) stacks, in order: pending write approvals waiting for a yes or no, unread `needs_action` entries grouped by `source`, then unread `fyi` entries in the same grouping -- deprioritized, never hidden.
+
 ## Stage 8: the record
 
 The record is closed with the resolved inputs, the guidelines and memories inlined, every tool call, the approvals queued, the model command, the usage block, the outcome, the output description, and the duration. `clear_running` drops the in-flight marker, `write_record` persists it, and a final `run_finished` event goes to the stream.

@@ -812,6 +812,14 @@ def validate(wf: Workflow, home: Path) -> list[str]:
                 "output.target 'guideline' can't use placeholders in path -- "
                 "it names one durable file that every run updates")
 
+    attention = wf.output.get("attention")
+    if attention and attention not in ("fyi", "needs_action"):
+        # Kept as literals rather than importing px0.inbox.ATTENTION_VALUES:
+        # workflow.py is the lower-level module and inbox delivery is one of
+        # several things that reads a parsed Workflow, not the other way round.
+        errors.append(
+            f"output.attention must be 'fyi' or 'needs_action', got {attention!r}")
+
     return errors
 
 

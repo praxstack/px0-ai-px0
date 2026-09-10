@@ -4,12 +4,21 @@ import threading
 import time
 import urllib.request
 import urllib.parse
+import urllib.error
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
 
-from px0 import authoring, config as config_mod, daemon as daemon_mod, workflow as workflow_mod
+from px0 import (
+    approvals as approvals_mod,
+    authoring,
+    config as config_mod,
+    daemon as daemon_mod,
+    inbox as inbox_mod,
+    tools,
+    workflow as workflow_mod,
+)
 from px0.web import server as web_server
 
 
@@ -82,7 +91,7 @@ def test_static_assets(web_test_env):
 def test_full_pages(web_test_env):
     base_url = web_test_env["base_url"]
     
-    for path in ["/", "/workflows", "/schedules", "/runs", "/daemon"]:
+    for path in ["/", "/needs-action", "/workflows", "/schedules", "/runs", "/daemon"]:
         with urllib.request.urlopen(f"{base_url}{path}") as resp:
             assert resp.status == 200
             html = resp.read().decode()
@@ -91,67 +100,67 @@ def test_full_pages(web_test_env):
             assert "/static/htmx.min.js" in html
 
 
-def test_api_views(web_test_env):
+def test_htmx_views(web_test_env):
     base_url = web_test_env["base_url"]
 
     # Dashboard view
-    with urllib.request.urlopen(f"{base_url}/api/views/dashboard") as resp:
+    with urllib.request.urlopen(f"{base_url}/htmx/views/dashboard") as resp:
         assert resp.status == 200
         html = resp.read().decode()
         assert "Total Workflows" in html
         assert "daily-test" in html or "Active Schedules" in html
 
     # Workflows view
-    with urllib.request.urlopen(f"{base_url}/api/views/workflows") as resp:
+    with urllib.request.urlopen(f"{base_url}/htmx/views/workflows") as resp:
         assert resp.status == 200
         html = resp.read().decode()
         assert "daily-test" in html
         assert "ENABLED" in html
 
     # Schedules view
-    with urllib.request.urlopen(f"{base_url}/api/views/schedules") as resp:
+    with urllib.request.urlopen(f"{base_url}/htmx/views/schedules") as resp:
         assert resp.status == 200
         html = resp.read().decode()
         assert "0 9 * * *" in html
         assert "daily-test" in html
 
     # Daemon badge
-    with urllib.request.urlopen(f"{base_url}/api/daemon/badge") as resp:
+    with urllib.request.urlopen(f"{base_url}/htmx/daemon/badge") as resp:
         assert resp.status == 200
         html = resp.read().decode()
         assert "daemon:" in html
 
 
-def test_workflow_modals(web_test_env):
+def test_htmx_workflow_modals(web_test_env):
     base_url = web_test_env["base_url"]
 
     # Workflow detail modal
-    with urllib.request.urlopen(f"{base_url}/api/workflows/daily-test") as resp:
+    with urllib.request.urlopen(f"{base_url}/htmx/workflows/daily-test") as resp:
         assert resp.status == 200
         html = resp.read().decode()
         assert "Daily test workflow" in html
         assert "modal-content" in html
 
     # Workflow run modal
-    with urllib.request.urlopen(f"{base_url}/api/workflows/daily-test/run-modal") as resp:
+    with urllib.request.urlopen(f"{base_url}/htmx/workflows/daily-test/run-modal") as resp:
         assert resp.status == 200
         html = resp.read().decode()
         assert "Run Workflow" in html
 
     # Schedule edit modal
-    with urllib.request.urlopen(f"{base_url}/api/schedules/daily-test/edit") as resp:
+    with urllib.request.urlopen(f"{base_url}/htmx/schedules/daily-test/edit") as resp:
         assert resp.status == 200
         html = resp.read().decode()
         assert "0 9 * * *" in html
         assert "Edit Schedule" in html
 
 
-def test_workflow_toggle(web_test_env):
+def test_htmx_workflow_toggle(web_test_env):
     base_url = web_test_env["base_url"]
     home = web_test_env["home"]
 
     # Toggle off
-    req = urllib.request.Request(f"{base_url}/api/workflows/daily-test/toggle", method="POST", data=b"")
+    req = urllib.request.Request(f"{base_url}/htmx/workflows/daily-test/toggle", method="POST", data=b"")
     with urllib.request.urlopen(req) as resp:
         assert resp.status == 200
         html = resp.read().decode()
@@ -161,7 +170,7 @@ def test_workflow_toggle(web_test_env):
     assert wf.enabled is False
 
     # Toggle on
-    req = urllib.request.Request(f"{base_url}/api/workflows/daily-test/toggle", method="POST", data=b"")
+    req = urllib.request.Request(f"{base_url}/htmx/workflows/daily-test/toggle", method="POST", data=b"")
     with urllib.request.urlopen(req) as resp:
         assert resp.status == 200
         html = resp.read().decode()
@@ -171,12 +180,12 @@ def test_workflow_toggle(web_test_env):
     assert wf.enabled is True
 
 
-def test_schedule_update(web_test_env):
+def test_htmx_schedule_update(web_test_env):
     base_url = web_test_env["base_url"]
     home = web_test_env["home"]
 
     data = urllib.parse.urlencode({"schedule": "*/15 * * * *"}).encode()
-    req = urllib.request.Request(f"{base_url}/api/schedules/daily-test/update", method="POST", data=data)
+    req = urllib.request.Request(f"{base_url}/htmx/schedules/daily-test/update", method="POST", data=data)
     with urllib.request.urlopen(req) as resp:
         assert resp.status == 200
         html = resp.read().decode()
@@ -186,19 +195,414 @@ def test_schedule_update(web_test_env):
     assert wf.trigger.get("schedule") == "*/15 * * * *"
 
 
-def test_daemon_tick(web_test_env):
+def test_htmx_daemon_tick(web_test_env):
     base_url = web_test_env["base_url"]
-    req = urllib.request.Request(f"{base_url}/api/daemon/action?act=tick", method="POST", data=b"")
+    req = urllib.request.Request(f"{base_url}/htmx/daemon/action?act=tick", method="POST", data=b"")
     with urllib.request.urlopen(req) as resp:
         assert resp.status == 200
         html = resp.read().decode()
         assert "Schedule tick completed" in html
 
-def test_workflow_run_trigger(web_test_env):
+
+def test_htmx_workflow_run_trigger(web_test_env):
     base_url = web_test_env["base_url"]
     data = urllib.parse.urlencode({}).encode()
-    req = urllib.request.Request(f"{base_url}/api/workflows/daily-test/trigger", method="POST", data=data)
+    req = urllib.request.Request(f"{base_url}/htmx/workflows/daily-test/trigger", method="POST", data=data)
     with urllib.request.urlopen(req) as resp:
         assert resp.status == 200
         html = resp.read().decode()
         assert "Run initiated successfully" in html
+
+
+def test_needs_action_view(web_test_env):
+    """The single glance-view: a pending approval and a mix of needs_action
+    and fyi inbox entries, grouped by source."""
+    home, config = web_test_env["home"], web_test_env["config"]
+    base_url = web_test_env["base_url"]
+
+    approvals_mod.queue(home, run_id="r1", workflow_id="daily-test",
+                        tool="slack.post_message", args={"channel": "#eng"})
+    inbox_mod.deliver(home, config, workflow_id="daily-test", run_id="r2",
+                      text="PR #42 waiting on your review", source="github",
+                      attention=inbox_mod.NEEDS_ACTION)
+    inbox_mod.deliver(home, config, workflow_id="daily-test", run_id="r3",
+                      text="Friday digest posted", source="slack",
+                      attention=inbox_mod.FYI)
+
+    with urllib.request.urlopen(f"{base_url}/htmx/views/needs-action") as resp:
+        assert resp.status == 200
+        html = resp.read().decode()
+        assert "Pending Approvals" in html
+        assert "slack.post_message" in html
+        assert "Needs your attention" in html
+        assert "github" in html
+        assert "FYI" in html
+
+    with urllib.request.urlopen(f"{base_url}/htmx/needs-action/badge") as resp:
+        assert resp.status == 200
+        html = resp.read().decode()
+        assert "needs action: 2" in html  # 1 pending approval + 1 needs_action entry
+
+
+def test_needs_action_empty_state(web_test_env):
+    base_url = web_test_env["base_url"]
+    with urllib.request.urlopen(f"{base_url}/htmx/views/needs-action") as resp:
+        assert resp.status == 200
+        html = resp.read().decode()
+        assert "Nothing waiting on you" in html
+
+
+def test_approval_actions(web_test_env, monkeypatch):
+    home, config = web_test_env["home"], web_test_env["config"]
+    base_url = web_test_env["base_url"]
+    monkeypatch.setattr(tools, "call", lambda *a: {"ok": True})
+
+    approved = approvals_mod.queue(home, run_id="r1", workflow_id="daily-test",
+                                   tool="slack.post_message", args={"channel": "#eng"})
+    req = urllib.request.Request(
+        f"{base_url}/htmx/approvals/{approved['id']}/approve", method="POST", data=b"")
+    with urllib.request.urlopen(req) as resp:
+        assert resp.status == 200
+    assert approvals_mod.read(home, approved["id"])["status"] == approvals_mod.APPROVED
+
+    rejected = approvals_mod.queue(home, run_id="r1", workflow_id="daily-test",
+                                    tool="slack.post_message", args={"channel": "#eng"})
+    data = urllib.parse.urlencode({"reason": "wrong channel"}).encode()
+    req = urllib.request.Request(
+        f"{base_url}/htmx/approvals/{rejected['id']}/reject", method="POST", data=data)
+    with urllib.request.urlopen(req) as resp:
+        assert resp.status == 200
+    resolved = approvals_mod.read(home, rejected["id"])
+    assert resolved["status"] == approvals_mod.REJECTED
+    assert resolved["detail"] == "wrong channel"
+
+
+def test_inbox_mark_from_web(web_test_env):
+    home, config = web_test_env["home"], web_test_env["config"]
+    base_url = web_test_env["base_url"]
+    entry = inbox_mod.deliver(home, config, workflow_id="daily-test", run_id="r1",
+                              text="something", source="github",
+                              attention=inbox_mod.NEEDS_ACTION)
+
+    data = urllib.parse.urlencode({"status": "archived"}).encode()
+    req = urllib.request.Request(
+        f"{base_url}/htmx/inbox/{entry['id']}/mark", method="POST", data=data)
+    with urllib.request.urlopen(req) as resp:
+        assert resp.status == 200
+    assert inbox_mod.read_entry(home, entry["id"])["status"] == inbox_mod.ARCHIVED
+
+
+def test_inbox_entry_detail_modal(web_test_env):
+    home, config = web_test_env["home"], web_test_env["config"]
+    base_url = web_test_env["base_url"]
+    entry = inbox_mod.deliver(home, config, workflow_id="daily-test", run_id="r1",
+                              text="something worth reading", source="github",
+                              attention=inbox_mod.NEEDS_ACTION)
+
+    with urllib.request.urlopen(f"{base_url}/htmx/inbox/{entry['id']}") as resp:
+        assert resp.status == 200
+        html = resp.read().decode()
+        assert "something worth reading" in html
+    # Opening it marks it read, same as `px0 inbox read`
+    assert inbox_mod.read_entry(home, entry["id"])["status"] == inbox_mod.READ
+
+
+def test_portal_route_returns_widgets(web_test_env, monkeypatch):
+    """The deterministic-portal route (px0/portal.py) never touches a real
+    network call in this test -- `tools.call` is monkeypatched, which also
+    covers `portal.tools_mod.call` since it's the same module object."""
+    base_url = web_test_env["base_url"]
+
+    def fake_call(home, config, tool_id, args):
+        if tool_id == "github.list_my_prs":
+            return [{"title": "My open PR", "url": "https://x/1", "state": "open",
+                     "updated_at": "2026-09-01T00:00:00Z"}]
+        return []
+
+    monkeypatch.setattr(tools, "call", fake_call)
+
+    with urllib.request.urlopen(f"{base_url}/htmx/portal/github") as resp:
+        assert resp.status == 200
+        html = resp.read().decode()
+        assert "Your open pull requests" in html
+        assert "My open PR" in html
+        assert "Needs your review" in html
+
+
+def test_portal_route_persists_and_does_not_refetch(web_test_env, monkeypatch):
+    """The whole point of the persistence layer: a first GET fetches live
+    and writes output/portal/<app>.md; a second GET must read that file
+    straight off disk, with no further tools.call."""
+    home = web_test_env["home"]
+    base_url = web_test_env["base_url"]
+    call_count = {"n": 0}
+
+    def fake_call(home_arg, config, tool_id, args):
+        call_count["n"] += 1
+        if tool_id == "linear.get_current_user":
+            return {"id": "u1"}
+        if tool_id == "linear.list_my_issues":
+            return [{"title": "Fix bug"}]
+        return []
+
+    monkeypatch.setattr(tools, "call", fake_call)
+
+    with urllib.request.urlopen(f"{base_url}/htmx/portal/linear") as resp:
+        assert resp.status == 200
+        first_html = resp.read().decode()
+    assert "Fix bug" in first_html
+    first_count = call_count["n"]
+    assert first_count > 0
+    assert (home / "output" / "portal" / "linear.md").exists()
+
+    with urllib.request.urlopen(f"{base_url}/htmx/portal/linear") as resp:
+        assert resp.status == 200
+        second_html = resp.read().decode()
+    assert call_count["n"] == first_count  # no new fetch
+    assert "Fix bug" in second_html
+
+
+def test_portal_refresh_route_forces_a_fresh_fetch(web_test_env, monkeypatch):
+    home = web_test_env["home"]
+    base_url = web_test_env["base_url"]
+    responses = iter([
+        [{"title": "First PR", "url": "https://x/1", "state": "open", "updated_at": "2026-09-01T00:00:00Z"}],
+        [{"title": "Second PR", "url": "https://x/2", "state": "open", "updated_at": "2026-09-02T00:00:00Z"}],
+    ])
+
+    def fake_call(home_arg, config, tool_id, args):
+        if tool_id == "github.list_my_prs":
+            return next(responses)
+        return []
+
+    monkeypatch.setattr(tools, "call", fake_call)
+
+    with urllib.request.urlopen(f"{base_url}/htmx/portal/github") as resp:
+        assert "First PR" in resp.read().decode()
+
+    req = urllib.request.Request(f"{base_url}/htmx/portal/github/refresh", method="POST", data=b"")
+    with urllib.request.urlopen(req) as resp:
+        assert resp.status == 200
+        html = resp.read().decode()
+    assert "Second PR" in html
+    assert "First PR" not in html
+    assert "Second PR" in (home / "output" / "portal" / "github.md").read_text()
+
+
+def test_portal_route_serves_a_workflow_written_file(web_test_env, monkeypatch):
+    """A workflow writing output/portal/<app>.md directly must be served
+    as-is, with no live tools.call at all."""
+    home = web_test_env["home"]
+    base_url = web_test_env["base_url"]
+
+    def fail_call(*a, **k):
+        raise AssertionError("tools.call must not be reached when the file already exists")
+
+    portal_dir = home / "output" / "portal"
+    portal_dir.mkdir(parents=True, exist_ok=True)
+    (portal_dir / "slack.md").write_text("## Written by a workflow\n\n- hand-curated note\n")
+
+    monkeypatch.setattr(tools, "call", fail_call)
+
+    with urllib.request.urlopen(f"{base_url}/htmx/portal/slack") as resp:
+        assert resp.status == 200
+        html = resp.read().decode()
+    assert "Written by a workflow" in html
+    assert "hand-curated note" in html
+
+
+def test_portal_route_unknown_app_404(web_test_env):
+    base_url = web_test_env["base_url"]
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(f"{base_url}/htmx/portal/notarealapp")
+    assert exc_info.value.code == 404
+
+
+def test_needs_action_fragment_has_portal_placeholder(web_test_env):
+    """The default-active app tab's live section fires eagerly on load; the
+    placeholder + the JS that lazy-loads other tabs must both be present in
+    the returned fragment, whether reached via `/` or the htmx partial."""
+    base_url = web_test_env["base_url"]
+    with urllib.request.urlopen(f"{base_url}/htmx/views/needs-action") as resp:
+        assert resp.status == 200
+        html = resp.read().decode()
+        assert 'id="portal-github"' in html
+        assert "pxLoadPortal" in html
+        assert "pxLoadPortal('github')" in html
+    # "Other" never gets a portal placeholder -- it's scoped to the three
+    # known apps px0 has real tooling for.
+    assert 'id="portal-other"' not in html
+
+
+# =========================================================================
+# JSON REST API Unit Tests
+# =========================================================================
+
+def test_api_daemon_endpoints(web_test_env):
+    import json
+    base_url = web_test_env["base_url"]
+
+    # Status
+    with urllib.request.urlopen(f"{base_url}/api/daemon/status") as resp:
+        assert resp.status == 200
+        assert resp.headers.get("Content-Type") == "application/json"
+        data = json.loads(resp.read().decode())
+        assert "alive" in data
+
+    # Tick
+    req = urllib.request.Request(f"{base_url}/api/daemon/action?act=tick", method="POST", data=b"")
+    with urllib.request.urlopen(req) as resp:
+        assert resp.status == 200
+        assert resp.headers.get("Content-Type") == "application/json"
+        data = json.loads(resp.read().decode())
+        assert data.get("status") == "ok"
+        assert data.get("action") == "tick"
+
+
+def test_api_workflows_endpoints(web_test_env):
+    import json
+    base_url = web_test_env["base_url"]
+    home = web_test_env["home"]
+
+    # List workflows
+    with urllib.request.urlopen(f"{base_url}/api/workflows") as resp:
+        assert resp.status == 200
+        assert resp.headers.get("Content-Type") == "application/json"
+        data = json.loads(resp.read().decode())
+        assert "workflows" in data
+        assert any(w["id"] == "daily-test" for w in data["workflows"])
+
+    # Detail workflow
+    with urllib.request.urlopen(f"{base_url}/api/workflows/daily-test") as resp:
+        assert resp.status == 200
+        assert resp.headers.get("Content-Type") == "application/json"
+        data = json.loads(resp.read().decode())
+        assert data["id"] == "daily-test"
+        assert data["enabled"] is True
+
+    # Toggle workflow via JSON
+    req = urllib.request.Request(
+        f"{base_url}/api/workflows/daily-test/toggle",
+        method="POST",
+        data=json.dumps({"enabled": False}).encode(),
+        headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(req) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode())
+        assert data["enabled"] is False
+
+    wf = workflow_mod.load(home, "daily-test")
+    assert wf.enabled is False
+
+    # Trigger workflow run
+    req = urllib.request.Request(
+        f"{base_url}/api/workflows/daily-test/trigger",
+        method="POST",
+        data=json.dumps({"inputs": {}}).encode(),
+        headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(req) as resp:
+        assert resp.status == 202
+        assert resp.headers.get("Content-Type") == "application/json"
+        data = json.loads(resp.read().decode())
+        assert data["status"] == "triggered"
+        assert data["workflow_id"] == "daily-test"
+
+
+def test_api_schedules_endpoints(web_test_env):
+    import json
+    base_url = web_test_env["base_url"]
+    home = web_test_env["home"]
+
+    # List schedules
+    with urllib.request.urlopen(f"{base_url}/api/schedules") as resp:
+        assert resp.status == 200
+        assert resp.headers.get("Content-Type") == "application/json"
+        data = json.loads(resp.read().decode())
+        assert "schedules" in data
+        sched = next((s for s in data["schedules"] if s["workflow_id"] == "daily-test"), None)
+        assert sched is not None
+
+    # Update schedule via JSON API
+    req = urllib.request.Request(
+        f"{base_url}/api/schedules/daily-test/update",
+        method="POST",
+        data=json.dumps({"schedule": "0 12 * * *"}).encode(),
+        headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(req) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode())
+        assert data["schedule"] == "0 12 * * *"
+
+    wf = workflow_mod.load(home, "daily-test")
+    assert wf.trigger.get("schedule") == "0 12 * * *"
+
+
+def test_api_needs_action_and_approvals(web_test_env, monkeypatch):
+    import json
+    home, config = web_test_env["home"], web_test_env["config"]
+    base_url = web_test_env["base_url"]
+    monkeypatch.setattr(tools, "call", lambda *a: {"ok": True})
+
+    apprv = approvals_mod.queue(home, run_id="r1", workflow_id="daily-test",
+                                tool="slack.post_message", args={"channel": "#eng"})
+    inbox_entry = inbox_mod.deliver(home, config, workflow_id="daily-test", run_id="r2",
+                                    text="PR review needed", source="github",
+                                    attention=inbox_mod.NEEDS_ACTION)
+
+    # Needs-action summary
+    with urllib.request.urlopen(f"{base_url}/api/needs-action/summary") as resp:
+        assert resp.status == 200
+        assert resp.headers.get("Content-Type") == "application/json"
+        summary = json.loads(resp.read().decode())
+        assert summary["pending_approvals"] >= 1
+        assert summary["unread_needs_action"] >= 1
+
+    # List approvals
+    with urllib.request.urlopen(f"{base_url}/api/approvals") as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode())
+        assert "approvals" in data
+        assert any(a["id"] == apprv["id"] for a in data["approvals"])
+
+    # Detail approval
+    with urllib.request.urlopen(f"{base_url}/api/approvals/{apprv['id']}") as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode())
+        assert data["id"] == apprv["id"]
+
+    # Approve
+    req = urllib.request.Request(
+        f"{base_url}/api/approvals/{apprv['id']}/approve", method="POST", data=b"")
+    with urllib.request.urlopen(req) as resp:
+        assert resp.status == 200
+        res = json.loads(resp.read().decode())
+        assert res["status"] == approvals_mod.APPROVED
+
+    # List inbox
+    with urllib.request.urlopen(f"{base_url}/api/inbox") as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode())
+        assert "inbox" in data
+
+    # Detail inbox
+    with urllib.request.urlopen(f"{base_url}/api/inbox/{inbox_entry['id']}") as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode())
+        assert data["id"] == inbox_entry["id"]
+        assert "body" in data
+
+    # Mark inbox
+    req = urllib.request.Request(
+        f"{base_url}/api/inbox/{inbox_entry['id']}/mark",
+        method="POST",
+        data=json.dumps({"status": "archived"}).encode(),
+        headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(req) as resp:
+        assert resp.status == 200
+        data = json.loads(resp.read().decode())
+        assert data["status"] == "archived"
+

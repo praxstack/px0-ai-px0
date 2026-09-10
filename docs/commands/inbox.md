@@ -11,11 +11,15 @@ when it is not. px0 did the work and then had nowhere to say so.
 Implemented by `px0/inbox.py`.
 
 ```
-px0 inbox [list] [--all] [--workflow ID] [--json]
+px0 inbox [list] [--all] [--workflow ID] [--source APP] [--attention fyi|needs_action] [--json]
 px0 inbox read [entry-id] [--json]
 px0 inbox archive <entry-id>
 px0 inbox clear [--all]
 ```
+
+The same entries also have a home in the local web dashboard (`px0 ui`), under the
+Needs Action tab -- pending write approvals and unread `needs_action` entries
+in one glance, grouped by app, next to (not instead of) this command.
 
 ## What gets delivered
 
@@ -46,6 +50,20 @@ the output. Its title comes from the output's own first heading, since a
 workflow that already writes `## PRs you reviewed this week` has said what the
 entry is better than any label px0 could synthesize.
 
+Every entry also carries two more fields, filled in automatically at delivery:
+
+- `source` -- which app the run is about (`github`, `slack`, `linear`, ...),
+  read from the tools the run actually called. Not something you set.
+- `attention` -- `fyi` (a status digest, the default) or `needs_action`
+  (something specific is waiting on you). This one you do set, in the
+  workflow's own frontmatter:
+
+```yaml
+output:
+  target: inbox
+  attention: needs_action   # sorts into the dashboard's "needs your attention" panel
+```
+
 ## `px0 inbox` / `px0 inbox list`
 
 What is waiting, newest first.
@@ -57,6 +75,14 @@ Include entries you have already read.
 ### `--workflow ID`
 
 Only entries from one workflow.
+
+### `--source APP`
+
+Only entries about one app, e.g. `--source github`.
+
+### `--attention fyi|needs_action`
+
+Only entries of one kind.
 
 ## `px0 inbox read`
 

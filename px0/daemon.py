@@ -35,6 +35,12 @@ POLL_INTERVAL_SECONDS = 30
 WATCH_SEEN_LIMIT = 500
 LATE_THRESHOLD_SECONDS = 90
 
+# The command a person types to start the daemon by hand. Every place that
+# points someone at it -- `px0 status`'s fix, the queued-playlist ingest
+# error, the web UI's start-failed fallback -- reads this constant, so a
+# future rename of the subcommand changes in one place instead of drifting.
+START_COMMAND = "px0 daemon start"
+
 
 def _log_event(config: dict, message: str) -> None:
     """Appends a timestamped message to daemon.log, swallowing OSError."""
@@ -346,6 +352,17 @@ def spawn_run(home: Path, workflow_id: str, late: bool, fire_time: datetime,
                 proc.stdin.close()
             except OSError:
                 pass
+
+
+def spawn_serve(home: Path) -> None:
+    """Launches `daemon serve` detached with PX0_HOME set -- the argv behind
+    `px0 daemon start`, `daemon restart`, and the web UI's start button. One
+    definition so those call sites can't drift apart."""
+    subprocess.Popen(
+        [sys.executable, "-m", "px0.cli", "daemon", "serve"],
+        env={**os.environ, "PX0_HOME": str(home)},
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
 
 
 def recover_missed_fires(home: Path, config: dict) -> None:
@@ -687,8 +704,4 @@ def restart_if_running(home: Path, config: dict) -> None:
                     break
         except Exception:
             pass
-        subprocess.Popen(
-            [sys.executable, "-m", "px0.cli", "daemon", "serve"],
-            env={**os.environ, "PX0_HOME": str(home)},
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+        spawn_serve(home)

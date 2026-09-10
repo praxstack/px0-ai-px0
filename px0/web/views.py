@@ -2,36 +2,131 @@
 
 import html
 import json
+import re
 from datetime import datetime
 from typing import Any
 from croniter import croniter
 
-from px0 import workflow as workflow_mod, daemon as daemon_mod, runs as runs_mod
+from px0 import (
+    approvals as approvals_mod,
+    daemon as daemon_mod,
+    inbox as inbox_mod,
+    runs as runs_mod,
+    tools as tools_mod,
+    workflow as workflow_mod,
+)
+
+# The needs-action home page's app tabs. Fixed and small on purpose -- these
+# are the apps px0 has real tooling for today; anything else (calendar,
+# gmail, custom tools, or a tool id that no longer resolves) falls into
+# "other" rather than getting silently dropped.
+APP_TABS: list[tuple[str, str]] = [
+    ("github", "GitHub"),
+    ("linear", "Linear"),
+    ("slack", "Slack"),
+]
+APP_LABELS: dict[str, str] = dict(APP_TABS) | {"other": "Other"}
+
+
+def _provider_of(home, tool_id: str) -> str:
+    """Best-effort app name for a tool id, for bucketing an approval into its
+    app tab. Never raises -- a stale approval referencing a since-removed
+    tool must still render somewhere (the "other" tab) rather than break the
+    page."""
+    try:
+        spec = tools_mod.resolve(tool_id, home)
+        if spec and spec.provider:
+            return spec.provider.lower()
+    except Exception:
+        pass
+    raw = tool_id[len("composio:"):] if tool_id.startswith("composio:") else tool_id
+    head = raw.split(".", 1)[0].split("_", 1)[0]
+    return (head or "px0").lower()
 
 
 def _escape(val: Any) -> str:
     return html.escape(str(val if val is not None else ""))
 
 
-def page_shell(content: str, active_tab: str = "dashboard", daemon_status: dict | None = None) -> str:
-    is_alive = daemon_status.get("alive", False) if daemon_status else False
-    badge_cls = "badge-success" if is_alive else "badge-dim"
-    dot_cls = "dot-green" if is_alive else "dot-red"
-    status_str = "RUNNING" if is_alive else "STOPPED"
-    daemon_badge = (
-        '<div id="header-daemon-badge" hx-get="/api/daemon/badge" hx-trigger="every 5s" hx-swap="outerHTML">'
-        f'<span class="badge {badge_cls}">'
-        f'<span class="dot {dot_cls}"></span>'
-        f'daemon: {status_str}'
-        '</span>'
-        '</div>'
-    )
+_MD_LINK_RE = re.compile(r'\[([^\]]+)\]\((https?://[^\s()]+)\)')
+_MD_BOLD_RE = re.compile(r'\*\*([^*\n]+)\*\*')
+_MD_CODE_RE = re.compile(r'`([^`\n]+)`')
+_MD_HEADING_RE = re.compile(r'^(#{1,3})\s+(.*)$')
+_MD_BULLET_RE = re.compile(r'^[-*]\s+(.*)$')
 
-    t_dash = 'active' if active_tab == 'dashboard' else ''
+
+def render_markdown(text: str) -> str:
+    """Renders a small, safe subset of markdown -- headings, bold, inline
+    code, http(s) links, bullet lists, paragraphs -- into HTML.
+
+    A workflow's output is the model's own text wrapped around whatever a
+    connector handed back: a PR title, a Slack message, an issue summary.
+    None of that is trusted. This escapes the *entire* source first and only
+    ever inserts tags this function itself writes, so a hostile title like
+    `<img src=x onerror=...>` lands on the page as inert text, never as a
+    live tag -- the same guarantee `_escape()` gives a `<pre>` block, just
+    with structure on top instead of none. Links are restricted to http(s)
+    so a `javascript:` URL from fetched content can't become clickable.
+    """
+    escaped = _escape(text)
+
+    def inline(s: str) -> str:
+        s = _MD_LINK_RE.sub(r'<a href="\2" target="_blank" rel="noopener noreferrer">\1</a>', s)
+        s = _MD_BOLD_RE.sub(r'<strong>\1</strong>', s)
+        s = _MD_CODE_RE.sub(r'<code>\1</code>', s)
+        return s
+
+    blocks: list[str] = []
+    para: list[str] = []
+    items: list[str] = []
+
+    def flush_para():
+        if para:
+            blocks.append(f"<p>{' '.join(para)}</p>")
+            para.clear()
+
+    def flush_list():
+        if items:
+            blocks.append("<ul>" + "".join(f"<li>{i}</li>" for i in items) + "</ul>")
+            items.clear()
+
+    for raw_line in escaped.split("\n"):
+        stripped = raw_line.strip()
+        if not stripped:
+            flush_para()
+            flush_list()
+            continue
+        heading = _MD_HEADING_RE.match(stripped)
+        if heading:
+            flush_para()
+            flush_list()
+            level = len(heading.group(1))
+            blocks.append(f"<h{level}>{inline(heading.group(2))}</h{level}>")
+            continue
+        bullet = _MD_BULLET_RE.match(stripped)
+        if bullet:
+            flush_para()
+            items.append(inline(bullet.group(1)))
+            continue
+        flush_list()
+        para.append(inline(stripped))
+
+    flush_para()
+    flush_list()
+    return "\n".join(blocks) or "<p class=\"empty-state\">Nothing to show.</p>"
+
+
+def page_shell(content: str, active_tab: str = "needs-action", daemon_status: dict | None = None,
+               home=None, config=None) -> str:
+    daemon_badge = render_daemon_badge(daemon_status or {})
+    needs_action_badge = render_needs_action_badge(home, config) if home and config else ""
+
+    t_stats = 'active' if active_tab == 'stats' else ''
     t_wf = 'active' if active_tab == 'workflows' else ''
     t_sched = 'active' if active_tab == 'schedules' else ''
     t_runs = 'active' if active_tab == 'runs' else ''
     t_daemon = 'active' if active_tab == 'daemon' else ''
+    t_na = 'active' if active_tab == 'needs-action' else ''
 
     script_block = """
   <script>
@@ -62,17 +157,19 @@ def page_shell(content: str, active_tab: str = "dashboard", daemon_status: dict 
 <body>
   <header>
     <div class="logo-area">
-      <div class="brand">px0<span>web</span></div>
+      <a href="/" class="brand" hx-get="/htmx/views/needs-action" hx-target="#main-view" hx-push-url="/">px0<span>web</span></a>
       <nav>
-        <a href="/" class="nav-btn {t_dash}" hx-get="/api/views/dashboard" hx-target="#main-view" hx-push-url="/">Dashboard</a>
-        <a href="/workflows" class="nav-btn {t_wf}" hx-get="/api/views/workflows" hx-target="#main-view" hx-push-url="/workflows">Workflows</a>
-        <a href="/schedules" class="nav-btn {t_sched}" hx-get="/api/views/schedules" hx-target="#main-view" hx-push-url="/schedules">Schedules</a>
-        <a href="/runs" class="nav-btn {t_runs}" hx-get="/api/views/runs" hx-target="#main-view" hx-push-url="/runs">Runs</a>
-        <a href="/daemon" class="nav-btn {t_daemon}" hx-get="/api/views/daemon" hx-target="#main-view" hx-push-url="/daemon">Daemon</a>
+        <a href="/" class="nav-btn {t_na}" hx-get="/htmx/views/needs-action" hx-target="#main-view" hx-push-url="/">Needs Action</a>
+        <a href="/stats" class="nav-btn {t_stats}" hx-get="/htmx/views/dashboard" hx-target="#main-view" hx-push-url="/stats">Stats</a>
+        <a href="/workflows" class="nav-btn {t_wf}" hx-get="/htmx/views/workflows" hx-target="#main-view" hx-push-url="/workflows">Workflows</a>
+        <a href="/schedules" class="nav-btn {t_sched}" hx-get="/htmx/views/schedules" hx-target="#main-view" hx-push-url="/schedules">Schedules</a>
+        <a href="/runs" class="nav-btn {t_runs}" hx-get="/htmx/views/runs" hx-target="#main-view" hx-push-url="/runs">Runs</a>
+        <a href="/daemon" class="nav-btn {t_daemon}" hx-get="/htmx/views/daemon" hx-target="#main-view" hx-push-url="/daemon">Daemon</a>
       </nav>
     </div>
     <div class="header-status">
       <div id="global-spinner" class="htmx-indicator spinner"></div>
+      {needs_action_badge}
       {daemon_badge}
     </div>
   </header>
@@ -87,17 +184,64 @@ def page_shell(content: str, active_tab: str = "dashboard", daemon_status: dict 
 </html>"""
 
 
-def render_daemon_badge(daemon_status: dict) -> str:
+def render_daemon_badge(daemon_status: dict, start_failed: bool = False) -> str:
+    """The header's daemon status pill. When the daemon is down it doubles as
+    a start control: a button that asks the server to spawn it in the
+    background (`/htmx/daemon/action?act=start&scope=header`), and, if that
+    doesn't bring it up, the exact command (`daemon_mod.START_COMMAND`) to
+    run by hand -- the same single source used by `px0 status` and the
+    playlist-ingest hint, so it can't say something different from the CLI.
+    """
     is_alive = daemon_status.get("alive", False)
     badge_cls = "badge-success" if is_alive else "badge-dim"
     dot_cls = "dot-green" if is_alive else "dot-red"
     status_str = "RUNNING" if is_alive else "STOPPED"
+    start_btn = ""
+    fallback = ""
+    if not is_alive:
+        start_btn = (
+            '<button class="btn btn-primary btn-sm" style="margin-left:6px;" '
+            'hx-post="/htmx/daemon/action?act=start&scope=header" '
+            'hx-target="#header-daemon-badge" hx-swap="outerHTML">Start</button>'
+        )
+        if start_failed:
+            fallback = (
+                '<div style="margin-top:4px; font-size:11px; color: var(--text-dim);">'
+                f'Could not start it here — run <code class="code-font">{_escape(daemon_mod.START_COMMAND)}</code>'
+                '</div>'
+            )
     return (
-        '<div id="header-daemon-badge" hx-get="/api/daemon/badge" hx-trigger="every 5s" hx-swap="outerHTML">'
+        '<div id="header-daemon-badge" hx-get="/htmx/daemon/badge" hx-trigger="every 5s" hx-swap="outerHTML">'
+        '<div style="display:flex; align-items:center;">'
         f'<span class="badge {badge_cls}">'
         f'<span class="dot {dot_cls}"></span>'
         f'daemon: {status_str}'
         '</span>'
+        f'{start_btn}'
+        '</div>'
+        f'{fallback}'
+        '</div>'
+    )
+
+
+def render_needs_action_badge(home, config) -> str:
+    """The self-polling header count of things waiting on you: pending
+    approvals plus unread needs_action inbox entries. Mirrors the daemon
+    badge's own hx-trigger idiom (`render_daemon_badge`, above), the only
+    other place this app polls on a timer."""
+    count = (approvals_mod.pending_count(home, config)
+             + len(inbox_mod.listing(home, status=inbox_mod.UNREAD, attention=inbox_mod.NEEDS_ACTION)))
+    badge_cls = "badge-info" if count else "badge-dim"
+    label = f"needs action: {count}" if count else "needs action: 0"
+    return (
+        '<div id="header-needs-action-badge" hx-get="/htmx/needs-action/badge" '
+        'hx-trigger="every 5s" hx-swap="outerHTML">'
+        f'<a href="/" hx-get="/htmx/views/needs-action" hx-target="#main-view" '
+        f'hx-push-url="/" style="text-decoration:none;">'
+        f'<span class="badge {badge_cls}">'
+        f'<span class="dot {"dot-amber" if count else "dot-green"}"></span>'
+        f'{label}'
+        '</span></a>'
         '</div>'
     )
 
@@ -126,7 +270,7 @@ def render_dashboard(home, config) -> str:
                 f'<td><span class="code-font">{wf_id}</span></td>'
                 f'<td><span class="badge {badge_class}">{_escape(outcome)}</span></td>'
                 f'<td class="code-font">{st}</td>'
-                f'<td><button class="btn btn-secondary btn-sm" hx-get="/api/runs/{run_id}" hx-target="#modal-container">Details</button></td>'
+                f'<td><button class="btn btn-secondary btn-sm" hx-get="/htmx/runs/{run_id}" hx-target="#modal-container">Details</button></td>'
                 f'</tr>'
             )
         runs_html = (
@@ -168,9 +312,272 @@ def render_dashboard(home, config) -> str:
     <div class="panel">
       <div class="panel-header">
         <div class="panel-title">Recent Historical Runs</div>
-        <a href="/runs" class="btn btn-secondary btn-sm" hx-get="/api/views/runs" hx-target="#main-view" hx-push-url="/runs">View All Runs</a>
+        <a href="/runs" class="btn btn-secondary btn-sm" hx-get="/htmx/views/runs" hx-target="#main-view" hx-push-url="/runs">View All Runs</a>
       </div>
       {runs_html}
+    </div>
+    """
+
+
+def _render_pending_approvals(pending: list[dict]) -> str:
+    if not pending:
+        return ""
+    cards = []
+    for a in pending:
+        aid = _escape(a["id"])
+        args_preview = _escape(json.dumps(a.get("args") or {})[:300])
+        cards.append(f"""
+        <div class="form-group" id="approval-{aid}" style="border:1px solid var(--panel-border); border-radius: var(--radius); padding:10px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+            <div>
+              <span class="code-id">{aid}</span>
+              <span class="code-font" style="margin-left:8px;">{_escape(a.get('tool'))}</span>
+              <span style="color: var(--text-dim); margin-left:8px;">from {_escape(a.get('workflow_id'))}</span>
+            </div>
+            <div style="display:flex; gap:6px;">
+              <button class="btn btn-primary btn-sm" hx-post="/htmx/approvals/{aid}/approve" hx-target="#approval-{aid}" hx-swap="outerHTML">Approve</button>
+              <button class="btn btn-danger btn-sm" hx-post="/htmx/approvals/{aid}/reject" hx-target="#approval-{aid}" hx-swap="outerHTML">Reject</button>
+            </div>
+          </div>
+          <div class="code-font" style="color: var(--text-dim); margin-top:6px;">args: {args_preview}</div>
+          {f'<div style="margin-top:6px;">{_escape(a.get("output_preview", ""))[:300]}</div>' if a.get('output_preview') else ''}
+        </div>
+        """)
+    return f"""
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">Pending Approvals ({len(pending)})</div>
+      </div>
+      {"".join(cards)}
+    </div>
+    """
+
+
+def _render_inbox_group(home, config, title: str, entries: list[dict]) -> str:
+    """One panel per attention level, one glance card per source app inside
+    it. The card shows the *latest* entry's full rendered body inline --
+    that is the "see everything at a glance" surface: no click needed to
+    read what a starter workflow found. Older entries for the same source
+    stay one click away, in a compact table under the card."""
+    if not entries:
+        return ""
+    by_source: dict[str, list[dict]] = {}
+    for e in entries:
+        by_source.setdefault(e.get("source") or "px0", []).append(e)
+
+    sections = []
+    for source in sorted(by_source):
+        group = sorted(by_source[source], key=lambda e: e.get("created", ""), reverse=True)
+        latest, rest = group[0], group[1:]
+
+        latest_id = _escape(latest["id"])
+        latest_created = _escape(latest.get("created", "")[:19].replace("T", " "))
+        latest_body = inbox_mod.body(home, config, latest)
+        card = f"""
+        <div class="source-card" id="inbox-row-{latest_id}">
+          <div class="source-card-header">
+            <span class="badge badge-dim">{_escape(source)}</span>
+            <span class="code-font" style="color: var(--text-dim);">{latest_created}</span>
+            <div style="flex:1;"></div>
+            <button class="btn btn-secondary btn-sm" hx-post="/htmx/inbox/{latest_id}/mark" hx-vals='{{"status": "archived"}}' hx-target="#inbox-row-{latest_id}" hx-swap="outerHTML">Archive</button>
+          </div>
+          <div class="markdown-body">{render_markdown(latest_body)}</div>
+        </div>
+        """
+
+        rest_html = ""
+        if rest:
+            rows = []
+            for e in rest:
+                eid = _escape(e["id"])
+                created = _escape(e.get("created", "")[:19].replace("T", " "))
+                rows.append(f"""
+                <tr id="inbox-row-{eid}">
+                  <td>{_escape(e.get('title', ''))}</td>
+                  <td class="code-font" style="color: var(--text-dim);">{created}</td>
+                  <td>
+                    <div style="display:flex; gap:6px;">
+                      <button class="btn btn-secondary btn-sm" hx-get="/htmx/inbox/{eid}" hx-target="#modal-container">Open</button>
+                      <button class="btn btn-secondary btn-sm" hx-post="/htmx/inbox/{eid}/mark" hx-vals='{{"status": "archived"}}' hx-target="#inbox-row-{eid}" hx-swap="outerHTML">Archive</button>
+                    </div>
+                  </td>
+                </tr>
+                """)
+            rest_html = f"""
+            <div class="table-wrapper" style="margin-top:8px;">
+              <table><thead><tr><th>Earlier</th><th>Delivered</th><th>Actions</th></tr></thead>
+              <tbody>{"".join(rows)}</tbody></table>
+            </div>
+            """
+        sections.append(card + rest_html)
+    return f"""
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">{_escape(title)} ({len(entries)})</div>
+      </div>
+      {"".join(sections)}
+    </div>
+    """
+
+
+def render_portal_section(app: str, text: str | None, updated_at: float | None) -> str:
+    """The deterministic-portal card for one app tab: whatever is persisted
+    at `output/portal/<app>.md` (px0/portal.py), rendered through the exact
+    same `render_markdown` every workflow-produced body already goes
+    through -- so a workflow that writes this same file instead of px0's own
+    refresh() renders identically, no special-casing needed. Swapped into a
+    `#portal-<app>` placeholder by `pxLoadPortal` in render_needs_action's
+    script, below, and re-rendered in place by the Refresh button's POST."""
+    when = (datetime.fromtimestamp(updated_at).strftime("%Y-%m-%d %H:%M")
+            if updated_at else "never")
+    body = render_markdown(text) if text and text.strip() else '<p class="empty-state">No live data yet.</p>'
+    return f"""
+    <div class="source-card" id="portal-card-{_escape(app)}">
+      <div class="source-card-header">
+        <span class="badge badge-dim">live</span>
+        <span class="code-font" style="color: var(--text-dim);">updated {_escape(when)}</span>
+        <div style="flex:1;"></div>
+        <button class="btn btn-secondary btn-sm" hx-post="/htmx/portal/{_escape(app)}/refresh"
+                hx-target="#portal-{_escape(app)}" hx-swap="innerHTML">Refresh</button>
+      </div>
+      <div class="markdown-body">{body}</div>
+    </div>
+    """
+
+
+def render_needs_action(home, config) -> str:
+    """The workbench's single "what needs me today" view, organized as one
+    vertical tab per app. Each tab stacks two layers: pending write
+    approvals and unread inbox entries first (workflow-delivered, actively
+    waiting on a yes/no or a read), then a deterministic "live" section
+    fetched by direct API call with no LLM/workflow involved (see
+    px0/portal.py) -- what the app says right now, not what a scheduled
+    workflow already told you. An app only shows what a workflow has
+    actually delivered for it (an approval's tool, or an inbox entry's
+    `source`); a tool/source that isn't github/linear/slack falls into
+    "other" rather than being dropped -- "other" gets no live section, since
+    the portal is scoped to the three apps px0 has real tooling for."""
+    pending = approvals_mod.listing(home, config, status=approvals_mod.PENDING)
+    needs_action = inbox_mod.listing(home, status=inbox_mod.UNREAD, attention=inbox_mod.NEEDS_ACTION)
+    fyi = inbox_mod.listing(home, status=inbox_mod.UNREAD, attention=inbox_mod.FYI)
+
+    known_apps = [app for app, _label in APP_TABS]
+    buckets: dict[str, dict[str, list[dict]]] = {
+        app: {"approvals": [], "needs_action": [], "fyi": []} for app in known_apps + ["other"]
+    }
+    for a in pending:
+        app = _provider_of(home, a.get("tool", ""))
+        buckets[app if app in buckets else "other"]["approvals"].append(a)
+    for e in needs_action:
+        app = e.get("source") or "px0"
+        buckets[app if app in buckets else "other"]["needs_action"].append(e)
+    for e in fyi:
+        app = e.get("source") or "px0"
+        buckets[app if app in buckets else "other"]["fyi"].append(e)
+
+    order = list(known_apps)
+    if any(buckets["other"].values()):
+        order.append("other")
+    # Prefer whichever tab actually has something queued; otherwise just land
+    # on the first known app so its live portal data has somewhere to open.
+    default_app = next((app for app in order if any(buckets[app].values())), order[0])
+
+    nav_items, panels = [], []
+    for app in order:
+        b = buckets[app]
+        count = len(b["approvals"]) + len(b["needs_action"]) + len(b["fyi"])
+        label = _escape(APP_LABELS.get(app, app.title()))
+        active = app == default_app
+        count_html = f'<span class="app-tab-count">{count}</span>' if count else ""
+        nav_items.append(
+            f'<button type="button" class="app-tab-btn{" active" if active else ""}" '
+            f'data-app-tab="{app}" onclick="pxSelectAppTab(\'{app}\')">{label}{count_html}</button>'
+        )
+
+        queue_html = (
+            _render_pending_approvals(b["approvals"])
+            + _render_inbox_group(home, config, "Needs your attention", b["needs_action"])
+            + _render_inbox_group(home, config, "FYI", b["fyi"])
+        )
+        if not queue_html:
+            queue_html = f'<div class="empty-state"><p>Nothing waiting on you in {label} right now.</p></div>'
+
+        portal_html = ""
+        if app in known_apps:
+            portal_html = (
+                f'<div id="portal-{app}" class="portal-widgets-loading">'
+                f'<span class="spinner"></span> '
+                f'<span style="color: var(--text-dim);">Loading live {label} data…</span></div>'
+            )
+
+        panels.append(
+            f'<div class="app-tab-panel" data-app-panel="{app}"{"" if active else " hidden"}>'
+            f'{queue_html}{portal_html}</div>'
+        )
+
+    return f"""
+    <div class="app-tabs">
+      <nav class="app-tab-nav">{"".join(nav_items)}</nav>
+      <div class="app-tab-content">{"".join(panels)}</div>
+    </div>
+    <script>
+      function pxSelectAppTab(app) {{
+        document.querySelectorAll('.app-tab-btn').forEach(function(el) {{
+          el.classList.toggle('active', el.getAttribute('data-app-tab') === app);
+        }});
+        document.querySelectorAll('.app-tab-panel').forEach(function(el) {{
+          el.hidden = el.getAttribute('data-app-panel') !== app;
+        }});
+        pxLoadPortal(app);
+      }}
+      function pxLoadPortal(app) {{
+        var el = document.getElementById('portal-' + app);
+        if (!el || el.dataset.loaded === '1') return;
+        el.dataset.loaded = '1';
+        htmx.ajax('GET', '/htmx/portal/' + app, {{target: '#portal-' + app, swap: 'innerHTML'}});
+      }}
+      pxLoadPortal('{default_app}');
+    </script>
+    """
+
+
+def render_inbox_entry_detail_modal(home, config, entry_id: str) -> str:
+    try:
+        entry = inbox_mod.read_entry(home, entry_id)
+    except inbox_mod.InboxError as e:
+        return f"""
+        <div class="modal-backdrop" onclick="if(event.target === this) closeModal();">
+          <div class="modal-content">
+            <div class="modal-header">
+              <div class="panel-title">Inbox Error</div>
+              <button class="btn btn-secondary btn-sm" onclick="closeModal()">Close</button>
+            </div>
+            <div class="modal-body"><p style="color: var(--danger);">{_escape(str(e))}</p></div>
+          </div>
+        </div>
+        """
+    if entry.get("status") == inbox_mod.UNREAD:
+        entry = inbox_mod.mark(home, entry_id, inbox_mod.READ)
+    body = inbox_mod.body(home, config, entry)
+    attention = entry.get("attention", inbox_mod.FYI)
+    badge_cls = "badge-info" if attention == inbox_mod.NEEDS_ACTION else "badge-dim"
+
+    return f"""
+    <div class="modal-backdrop" onclick="if(event.target === this) closeModal();">
+      <div class="modal-content">
+        <div class="modal-header">
+          <div class="panel-title">{_escape(entry.get('title', entry_id))}</div>
+          <button class="btn btn-secondary btn-sm" onclick="closeModal()">Close</button>
+        </div>
+        <div class="modal-body">
+          <div style="display:flex; gap:8px; margin-bottom:12px;">
+            <span class="badge {badge_cls}">{_escape(attention)}</span>
+            <span class="badge badge-dim">{_escape(entry.get('source', ''))}</span>
+            <span class="code-font" style="color: var(--text-dim);">from {_escape(entry.get('workflow_id', ''))}</span>
+          </div>
+          <div class="markdown-body">{render_markdown(body)}</div>
+        </div>
+      </div>
     </div>
     """
 
@@ -208,10 +615,10 @@ def render_workflows_list(home, config) -> str:
           <td class="code-font" style="color: var(--text-dim);">{_escape(tools_summary)}</td>
           <td>
             <div style="display: flex; gap: 6px;">
-              <button class="btn btn-primary btn-sm" hx-get="/api/workflows/{_escape(wf_id)}/run-modal" hx-target="#modal-container">Run</button>
-              <button class="btn btn-secondary btn-sm" hx-get="/api/workflows/{_escape(wf_id)}" hx-target="#modal-container">View</button>
+              <button class="btn btn-primary btn-sm" hx-get="/htmx/workflows/{_escape(wf_id)}/run-modal" hx-target="#modal-container">Run</button>
+              <button class="btn btn-secondary btn-sm" hx-get="/htmx/workflows/{_escape(wf_id)}" hx-target="#modal-container">View</button>
               <button class="btn btn-secondary btn-sm" 
-                      hx-post="/api/workflows/{_escape(wf_id)}/toggle" 
+                      hx-post="/htmx/workflows/{_escape(wf_id)}/toggle" 
                       hx-target="#wf-row-{_escape(wf_id)}" 
                       hx-swap="outerHTML">
                 {toggle_label}
@@ -274,10 +681,10 @@ def render_workflow_row(wf) -> str:
       <td class="code-font" style="color: var(--text-dim);">{_escape(tools_summary)}</td>
       <td>
         <div style="display: flex; gap: 6px;">
-          <button class="btn btn-primary btn-sm" hx-get="/api/workflows/{_escape(wf.id)}/run-modal" hx-target="#modal-container">Run</button>
-          <button class="btn btn-secondary btn-sm" hx-get="/api/workflows/{_escape(wf.id)}" hx-target="#modal-container">View</button>
+          <button class="btn btn-primary btn-sm" hx-get="/htmx/workflows/{_escape(wf.id)}/run-modal" hx-target="#modal-container">Run</button>
+          <button class="btn btn-secondary btn-sm" hx-get="/htmx/workflows/{_escape(wf.id)}" hx-target="#modal-container">View</button>
           <button class="btn btn-secondary btn-sm" 
-                  hx-post="/api/workflows/{_escape(wf.id)}/toggle" 
+                  hx-post="/htmx/workflows/{_escape(wf.id)}/toggle" 
                   hx-target="#wf-row-{_escape(wf.id)}" 
                   hx-swap="outerHTML">
             {toggle_label}
@@ -343,7 +750,7 @@ def render_workflow_detail_modal(wf) -> str:
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-primary" hx-get="/api/workflows/{_escape(wf.id)}/run-modal" hx-target="#modal-container">Run Workflow</button>
+          <button class="btn btn-primary" hx-get="/htmx/workflows/{_escape(wf.id)}/run-modal" hx-target="#modal-container">Run Workflow</button>
           <button class="btn btn-secondary" onclick="closeModal()">Close</button>
         </div>
       </div>
@@ -386,11 +793,11 @@ def render_schedules_list(home, config) -> str:
           <td>{status_badge}</td>
           <td>
             <div style="display: flex; gap: 6px;">
-              <button class="btn btn-primary btn-sm" hx-get="/api/schedules/{_escape(wf_id)}/edit" hx-target="#modal-container">Edit Schedule</button>
+              <button class="btn btn-primary btn-sm" hx-get="/htmx/schedules/{_escape(wf_id)}/edit" hx-target="#modal-container">Edit Schedule</button>
               <button class="btn btn-secondary btn-sm" 
-                      hx-post="/api/workflows/{_escape(wf_id)}/toggle" 
+                      hx-post="/htmx/workflows/{_escape(wf_id)}/toggle" 
                       hx-target="#main-view" 
-                      hx-get="/api/views/schedules">
+                      hx-get="/htmx/views/schedules">
                 {toggle_label}
               </button>
             </div>
@@ -442,7 +849,7 @@ def render_schedule_edit_modal(wf) -> str:
           <div class="panel-title">Edit Schedule: <span class="code-id">{_escape(wf.id)}</span></div>
           <button class="btn btn-secondary btn-sm" onclick="closeModal()">Close</button>
         </div>
-        <form hx-post="/api/schedules/{_escape(wf.id)}/update" hx-target="#main-view">
+        <form hx-post="/htmx/schedules/{_escape(wf.id)}/update" hx-target="#main-view">
           <div class="modal-body">
             <div class="form-group">
               <label class="form-label">Cron Expression</label>
@@ -493,7 +900,7 @@ def render_runs_list(config) -> str:
           <td class="code-font">{tool_calls_count}</td>
           <td class="code-font">{st_str}</td>
           <td>
-            <button class="btn btn-secondary btn-sm" hx-get="/api/runs/{run_id}" hx-target="#modal-container">Details</button>
+            <button class="btn btn-secondary btn-sm" hx-get="/htmx/runs/{run_id}" hx-target="#modal-container">Details</button>
           </td>
         </tr>
         """)
@@ -528,7 +935,7 @@ def render_runs_list(config) -> str:
     <div class="panel">
       <div class="panel-header">
         <div class="panel-title">Historical Runs ({len(records)})</div>
-        <button class="btn btn-secondary btn-sm" hx-get="/api/views/runs" hx-target="#main-view">Refresh</button>
+        <button class="btn btn-secondary btn-sm" hx-get="/htmx/views/runs" hx-target="#main-view">Refresh</button>
       </div>
       {table_content}
     </div>
@@ -591,7 +998,7 @@ def render_run_detail_modal(config, run_id: str) -> str:
 
           <div class="form-group">
             <div class="form-label">Output ({_escape(output_spec.get('target', 'stdout'))})</div>
-            <pre class="code-view">{_escape(output_text or 'No output recorded')}</pre>
+            {f'<div class="markdown-body">{render_markdown(output_text)}</div>' if output_text else '<p class="empty-state">No output recorded</p>'}
           </div>
 
           <div class="form-group">
@@ -650,7 +1057,7 @@ def render_run_modal(wf) -> str:
           <div class="panel-title">Run Workflow: <span class="code-id">{_escape(wf.id)}</span></div>
           <button class="btn btn-secondary btn-sm" onclick="closeModal()">Close</button>
         </div>
-        <form hx-post="/api/workflows/{_escape(wf.id)}/trigger" hx-target="#run-status-result">
+        <form hx-post="/htmx/workflows/{_escape(wf.id)}/trigger" hx-target="#run-status-result">
           <div class="modal-body">
             <p style="color: var(--text-dim); margin-bottom: 12px;">{_escape(wf.description or 'Execute this workflow immediately.')}</p>
             {vars_inputs_html}
@@ -687,7 +1094,7 @@ def render_daemon_view(home, config) -> str:
         daemon_log_tail = "No daemon.log found yet."
 
     status_badge = f'<span class="badge badge-success"><span class="dot dot-green"></span> RUNNING (PID {pid})</span>' if alive else '<span class="badge badge-danger"><span class="dot dot-red"></span> STOPPED</span>'
-    action_btn = '<button class="btn btn-danger btn-sm" hx-post="/api/daemon/action?act=stop" hx-target="#main-view">Stop Daemon</button>' if alive else '<button class="btn btn-primary btn-sm" hx-post="/api/daemon/action?act=start" hx-target="#main-view">Start Daemon</button>'
+    action_btn = '<button class="btn btn-danger btn-sm" hx-post="/htmx/daemon/action?act=stop" hx-target="#main-view">Stop Daemon</button>' if alive else '<button class="btn btn-primary btn-sm" hx-post="/htmx/daemon/action?act=start" hx-target="#main-view">Start Daemon</button>'
 
     return f"""
     <div id="daemon-panel" class="panel">
@@ -695,7 +1102,7 @@ def render_daemon_view(home, config) -> str:
         <div class="panel-title">Daemon Control & Observability</div>
         <div style="display: flex; gap: 8px;">
           <button class="btn btn-secondary btn-sm" 
-                  hx-post="/api/daemon/action?act=tick" 
+                  hx-post="/htmx/daemon/action?act=tick" 
                   hx-target="#daemon-action-result">
             Tick Now
           </button>

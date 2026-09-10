@@ -378,6 +378,9 @@ def build(handlers) -> argparse.ArgumentParser:
     ip = in_sub.add_parser("list", help="what is waiting")
     ip.add_argument("--all", action="store_true", help="include what you have read")
     ip.add_argument("--workflow", help="only entries from this workflow")
+    ip.add_argument("--source", help="only entries from this app, e.g. github, slack")
+    ip.add_argument("--attention", choices=["fyi", "needs_action"],
+                    help="only entries of this kind")
     ip.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     ip = in_sub.add_parser("read", help="read one entry, marking it read")
     ip.add_argument("entry_id", nargs="?", help="entry id; omit for the oldest unread")

@@ -432,7 +432,12 @@ def generate_plan(config: dict, description: str,
         '"output" ({"target": "stdout"|"file"|"guideline", "path": templated path '
         "if file -- its only placeholders are the clock ones: {{today}}, {{date}}, "
         "{{now}}, {{datetime}}, {{time}}, {{now-<N><unit>}}; anything else in "
-        'braces is an error, so never put an input id in a path}) -- '
+        'braces is an error, so never put an input id in a path, "attention": '
+        '"needs_action" if the request is asking to be shown specific things '
+        "that are waiting on the user personally -- an unresolved review "
+        "comment, a ticket assigned to them, a doc needing their sign-off -- "
+        'or "fyi" (the default, may be omitted) for a status digest or '
+        "announcement with nothing of the user's own left to do}) -- "
         'if trigger.schedule is set, target MUST be "file" or "guideline" with a '
         "path, since nobody is watching stdout for a run that fires on a cron, "
         "even when the body also posts somewhere via a tool call. "

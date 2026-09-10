@@ -251,16 +251,178 @@ def cmd_init(args: argparse.Namespace) -> None:
     for name, desc in folders:
         ui.kv(name, desc, width=width)
 
+    # Surfaced here because a fresh store is exactly when someone who already
+    # keeps notes somewhere would want to know they need not move them.
+    ui.hint("already keep notes in Obsidian, Logseq, or any folder of Markdown?")
+    ui.command("px0 config set brain.path ~/path/to/your/vault")
+
+    _prompt_issue_tracker(home)
+    _prompt_slack_messaging(home)
+
+    _connect_starter_apps(home)
+
     ui.hint("try next:")
+    # The starter workflows already gave the dashboard something to show, so
+    # it leads -- ahead of `workflows new`, which is for everything past them.
+    ui.command('px0 ui')
     ui.command('px0 workflows new')
     # Offered beside it because a fresh store has no workflows, and `ask` is
     # the one thing that already works on an empty one.
     ui.command('px0 ask "what can you do?"')
 
-    # Surfaced here because a fresh store is exactly when someone who already
-    # keeps notes somewhere would want to know they need not move them.
-    ui.hint("already keep notes in Obsidian, Logseq, or any folder of Markdown?")
-    ui.command("px0 config set brain.path ~/path/to/your/vault")
+
+# One read-only starter workflow per day-0 app -- see px0/starters.py for why
+# only these three, and why they never write anything on their own.
+_STARTER_APPS = [
+    ("github", "github-review-queue"),
+    ("linear", "linear-my-issues"),
+    ("slack", "slack-recent-activity"),
+]
+
+
+def _prompt_issue_tracker(home: Path) -> None:
+    """Prompts the user to connect an issue tracker (Linear, GitHub, or Skip)
+    and saves the API key/token into credentials.toml."""
+    options = [
+        ("Linear", "connect using Linear API key"),
+        ("GitHub", "connect using GitHub Personal Access Token"),
+        ("None", "skip issue tracker configuration"),
+    ]
+    ui.hint("choose an issue tracker to connect:")
+    try:
+        chosen = ui.select("Issue tracker", options)
+    except EOFError:
+        return
+
+    if chosen is None or chosen == 2:  # None / Cancel / Skip
+        return
+
+    if chosen == 0:  # Linear
+        ui.hint("how to get a Linear API key:")
+        ui.bullet("1. Go to https://linear.app/settings/account/api")
+        ui.bullet("2. Under 'Personal API keys', click 'Create key'")
+        ui.bullet("3. Give it a label (e.g. 'px0') and copy the key")
+        try:
+            key = ui.prompt("Linear API key: ")
+        except EOFError:
+            return
+        if key.strip():
+            creds_mod.set_service(home, "linear", {"api_key": key.strip()})
+            ui.ok("saved Linear API key to credentials")
+        else:
+            ui.info("skipped Linear configuration")
+
+    elif chosen == 1:  # GitHub
+        ui.hint("how to get a GitHub Personal Access Token:")
+        ui.bullet("1. Go to https://github.com/settings/tokens (classic) or tokens?type=beta (fine-grained)")
+        ui.bullet("2. Click 'Generate new token'")
+        ui.bullet("3. Grant 'repo' (or 'issues:read/write') scope and copy the token")
+        try:
+            token = ui.prompt("GitHub Personal Access Token: ")
+        except EOFError:
+            return
+        if token.strip():
+            creds_mod.set_service(home, "github", {"token": token.strip()})
+            ui.ok("saved GitHub token to credentials")
+        else:
+            ui.info("skipped GitHub configuration")
+
+
+def _prompt_slack_messaging(home: Path) -> None:
+    """Prompts the user to connect Slack as a messaging tool and saves the token
+    into credentials.toml."""
+    ui.hint("messaging tool integration:")
+    try:
+        answer = ui.prompt("Connect Slack as messaging tool? [y/N]: ")
+    except EOFError:
+        return
+
+    if answer.lower() not in ("y", "yes"):
+        return
+
+    ui.hint("how to get a Slack Bot or User Token:")
+    ui.bullet("1. Go to https://api.slack.com/apps and create/select your App")
+    ui.bullet("2. Under 'OAuth & Permissions' -> 'Scopes', add Bot Token Scopes:")
+    ui.bullet("   chat:write, channels:read, channels:history, app_mentions:read, reactions:write")
+    ui.bullet("3. Click 'Install to Workspace' and copy the Bot User OAuth Token (xoxb-...)")
+    try:
+        token = ui.prompt("Slack Bot/User Token (xoxb-... or xoxp-...): ")
+    except EOFError:
+        return
+
+    if token.strip():
+        creds_mod.set_service(home, "slack", {"token": token.strip()})
+        ui.ok("saved Slack token to credentials")
+    else:
+        ui.info("skipped Slack messaging configuration")
+
+
+def _connect_starter_apps(home: Path) -> None:
+    """Offers to connect GitHub/Linear/Slack right after `init`, and runs the
+    matching starter workflow the moment each one is connected -- so `px0 ui`
+    has real data to show before the user has written a single workflow.
+
+    An app left unconnected gets its starter workflow disabled rather than
+    left to fail on the daemon's first scheduled fire -- see
+    `cmd_workflows_enable` for the same pattern used by the `enable`/`disable`
+    commands.
+    """
+    try:
+        connect_mod.composio_client(home)
+    except (ValueError, connect_mod.ComposioUnreachable):
+        ui.hint("skipping app connections -- set up Composio first, then:")
+        ui.command("px0 tools connect <app>")
+        return
+
+    cfg = config_mod.load(paths.config_path(home))
+    ui.hint("connect the apps your starter workflows use:")
+    for app, workflow_id in _STARTER_APPS:
+        path = paths.workflows_dir(home) / f"{workflow_id}.md"
+        if not path.exists():
+            continue
+
+        with ui.spinner(f"Checking {app}"):
+            status = connect_mod.connected_account_status(home, app)
+
+        if status != "ACTIVE":
+            try:
+                answer = ui.prompt(f"Connect {app} now? [Y/n] ")
+            except EOFError:
+                print(file=sys.stderr)
+                answer = "n"
+            if answer.lower() not in ("n", "no"):
+                try:
+                    with ui.spinner(f"Preparing {app} authorization"):
+                        res = connect_mod.connect_composio_app(home, app)
+                    ui.step(app, "open this and complete the consent:", stream=sys.stdout)
+                    ui.command(res["redirect_url"])
+                    try:
+                        ui.prompt("Press Enter once you've connected: ")
+                    except EOFError:
+                        pass
+                    with ui.spinner(f"Rechecking {app}"):
+                        status = connect_mod.connected_account_status(home, app)
+                except ValueError as e:
+                    ui.warn(app, str(e).strip())
+
+        if status == "ACTIVE":
+            ui.ok(app, "connected")
+            with ui.spinner(f"Running {workflow_id}"):
+                try:
+                    record = runner.run(home, cfg, workflow_id, trigger="manual")
+                except runner.RunError as e:
+                    ui.warn(workflow_id, f"first run failed: {e}")
+                    continue
+            text = (record.get("output") or {}).get("text", "").strip()
+            if text:
+                ui.say(text.splitlines()[0][:120])
+            else:
+                ui.info(workflow_id, "ran, nothing to show yet")
+        else:
+            text = authoring.set_frontmatter_key(path.read_text(), "enabled", False)
+            authoring.write_file(home, path, text, evidence="disabled at init: app not connected")
+            ui.hint(f"{workflow_id} is off until {app} is connected -- "
+                     f"`px0 tools connect {app}` then `px0 workflows enable {workflow_id}`")
 
 
 def _clarify_loop(config: dict, description: str, skip: bool) -> list[tuple[str, str]]:
@@ -2097,11 +2259,7 @@ def cmd_daemon(args: argparse.Namespace) -> None:
 
     if args.daemon_cmd == "start":
         # detached child inherits current env plus an explicit PX0_HOME so it targets the same store
-        subprocess.Popen(
-            [sys.executable, "-m", "px0.cli", "daemon", "serve"],
-            env={**os.environ, "PX0_HOME": str(home)},
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+        daemon_mod.spawn_serve(home)
         ui.ok("daemon starting")
         return
 
@@ -2118,11 +2276,7 @@ def cmd_daemon(args: argparse.Namespace) -> None:
         s = daemon_mod.status(home, config)
         if s["pid"] and s["alive"]:
             os.kill(s["pid"], signal.SIGTERM)
-        subprocess.Popen(
-            [sys.executable, "-m", "px0.cli", "daemon", "serve"],
-            env={**os.environ, "PX0_HOME": str(home)},
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+        daemon_mod.spawn_serve(home)
         ui.ok("daemon restarted")
         return
 
@@ -2362,10 +2516,11 @@ def _print_diff(changes: list[tuple[str, str]], limit: int = 60) -> None:
 def cmd_workflows_recipes(args: argparse.Namespace) -> None:
     """Handles `px0 workflows recipes`: sentences to start an interview from.
 
-    px0 ships no workflows on purpose, and the cost of that was a blank page:
-    the hardest part of describing a job is knowing what sort of thing is
-    describable. These are sentences, not files -- picking one answers the
-    interview's first question and nothing else, so every workflow in the store
+    Past the three read-only starters `px0 init` ships (see px0/starters.py),
+    px0 writes nothing you did not ask for, and the cost of that is a blank
+    page: the hardest part of describing a job is knowing what sort of thing
+    is describable. These are sentences, not files -- picking one answers the
+    interview's first question and nothing else, so every workflow it builds
     is still one the user asked for.
     """
     from px0 import starters

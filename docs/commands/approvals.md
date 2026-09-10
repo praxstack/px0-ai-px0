@@ -24,6 +24,13 @@ px0 approvals reject <approval-id> [--reason WHY]
 px0 approvals purge [--days N]
 ```
 
+Pending approvals also show up in the local web dashboard (`px0 ui`), under
+the Needs Action tab, with inline Approve and Reject buttons next to each
+draft. That view calls the same `approve`/`reject` logic as this command,
+with the same recorded arguments and the same failure-stays-failed behavior:
+it is just another place to see and answer the queue from while you are
+already looking at what needs you today.
+
 ## Turning it on
 
 Per workflow, in its frontmatter — this wins over the store-wide default in

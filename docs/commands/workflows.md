@@ -498,20 +498,21 @@ The report and the proposal as JSON, applying nothing.
 
 Sentences to start an interview from.
 
-px0 ships no workflows on purpose — a store full of things you did not ask for
-is one you have to read before you can trust it. The cost of that was a blank
-page: the hardest part of describing a job is knowing what sort of thing is
-describable.
+Past the three read-only starters `px0 init` ships for GitHub, Linear, and
+Slack (see [`px0 init`](init.md)), px0 writes no workflow on purpose -- a
+store full of things you did not ask for is one you have to read before you
+can trust it. The cost of that is a blank page: the hardest part of
+describing a job is knowing what sort of thing is describable.
 
 These are sentences, not files. Picking one answers the interview's first
-question and nothing else, so every workflow in the store is still one you
+question and nothing else, so every workflow it builds is still one you
 asked for.
 
 ```shell
 px0 workflows recipes
 ```
 
-The full catalogue of 116 is in [Workflow use cases](../workflow_usecases.md).
+The full catalogue of 120 is in [Workflow use cases](../workflow_usecases.md).
 
 ---
 

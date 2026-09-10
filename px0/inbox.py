@@ -18,12 +18,22 @@ the inbox is a place to triage from, not a second copy of the output.
 
 import json
 import secrets
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from px0 import config as config_mod, paths
 
 UNREAD, READ, ARCHIVED = "unread", "read", "archived"
+
+# What an entry is worth to the person reading it. `fyi` is a status digest --
+# nothing to do but note it happened. `needs_action` says a specific thing is
+# waiting on you (a PR comment, a ticket, a doc). A workflow sets this itself
+# via `output.attention`: it is a judgment about intent, and nothing about a
+# tool id says which one a run is. Kept out of `kind`, which already names an
+# unrelated thing in workflow frontmatter, memory, and brain entries.
+FYI, NEEDS_ACTION = "fyi", "needs_action"
+ATTENTION_VALUES = (FYI, NEEDS_ACTION)
 
 # How much of the output an entry carries. Enough to decide whether to open the
 # rest from a listing; short enough that a month of dailies is still a small
@@ -66,14 +76,26 @@ def title_for(text: str, fallback: str) -> str:
 
 
 def deliver(home: Path, config: dict, *, workflow_id: str, run_id: str,
-            text: str, path: str | None = None, trigger: str = "") -> dict:
-    """Files one run's output in the inbox and returns the entry."""
+            text: str, path: str | None = None, trigger: str = "",
+            source: str = "", attention: str = FYI) -> dict:
+    """Files one run's output in the inbox and returns the entry.
+
+    `source` is the app this run is about (github, slack, linear, ...) --
+    computed by `infer_source`, not typed by the caller. `attention` is
+    whichever of `ATTENTION_VALUES` the workflow declared via
+    `output.attention`; an unrecognized value falls back to `fyi` rather than
+    raising, since a bad value here must not cost a run its whole delivery.
+    """
+    if attention not in ATTENTION_VALUES:
+        attention = FYI
     entry = {
         "id": new_id(),
         "status": UNREAD,
         "workflow_id": workflow_id,
         "run_id": run_id,
         "trigger": trigger,
+        "source": source or "px0",
+        "attention": attention,
         "title": title_for(text, workflow_id),
         "preview": (text or "")[:PREVIEW_CHARS],
         "chars": len(text or ""),
@@ -104,6 +126,37 @@ def should_deliver(config: dict, wf, trigger: str) -> bool:
     return trigger in ("schedule", "watch", "late")
 
 
+def infer_source(home: Path, wf, tool_calls: list[dict]) -> str:
+    """Which app this run is about, for grouping entries in the dashboard.
+
+    Read from what the run actually called, not what the workflow merely
+    declares -- a workflow with several tools available may only have used
+    one of them this time, and the run's own calls are the truer answer.
+    Falls back to what the workflow declares when it made no tool calls (a
+    dry stage, or a run that answered from context alone), and to "px0" for a
+    workflow that touches no external app at all (brain- or file-only work).
+    """
+    from px0 import tools as tools_mod
+
+    def provider_of(tool_id: str | None) -> str | None:
+        if not tool_id:
+            return None
+        spec = tools_mod.resolve(tool_id, home)
+        return spec.provider if spec else None
+
+    tallied = Counter(
+        p for p in (provider_of(tc.get("tool")) for tc in tool_calls or []) if p)
+    if tallied:
+        return tallied.most_common(1)[0][0]
+
+    declared = [provider_of(t) for t in (getattr(wf, "tools", None) or [])]
+    declared += [provider_of(i.tool) for i in (getattr(wf, "inputs", None) or [])]
+    for p in declared:
+        if p:
+            return p
+    return "px0"
+
+
 def read_entry(home: Path, entry_id: str) -> dict:
     path = _path(home, entry_id)
     if not path.exists():
@@ -121,7 +174,8 @@ def write_entry(home: Path, entry: dict) -> None:
 
 
 def listing(home: Path, status: str | None = UNREAD,
-            workflow: str | None = None) -> list[dict]:
+            workflow: str | None = None, source: str | None = None,
+            attention: str | None = None) -> list[dict]:
     """Entries matching the filters, newest first. `status=None` for everything."""
     base = inbox_dir(home)
     if not base.exists():
@@ -135,6 +189,10 @@ def listing(home: Path, status: str | None = UNREAD,
         if status and entry.get("status") != status:
             continue
         if workflow and entry.get("workflow_id") != workflow:
+            continue
+        if source and entry.get("source") != source:
+            continue
+        if attention and entry.get("attention", FYI) != attention:
             continue
         out.append(entry)
     return sorted(out, key=lambda e: e.get("created", ""), reverse=True)
