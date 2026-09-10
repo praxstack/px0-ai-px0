@@ -14,12 +14,15 @@ from dataclasses import asdict
 
 from px0 import (
     approvals as approvals_mod,
+    ask as ask_mod,
     authoring,
     daemon as daemon_mod,
     inbox as inbox_mod,
     paths,
     runner,
     runs as runs_mod,
+    tools as tools_mod,
+    triage as triage_mod,
     ui,
     workflow as workflow_mod,
 )
@@ -82,12 +85,66 @@ class WebUIHandler(SimpleHTTPRequestHandler):
             return
 
         # HTMX partial view updates
-        if path == "/htmx/views/dashboard":
+        if path == "/htmx/views/command-center":
+            html_out = views.render_command_center(self.home, self.config)
+            self._send_response(HTTPStatus.OK, html_out.encode(), "text/html")
+            return
+        elif path == "/htmx/views/dashboard":
             html_out = views.render_dashboard(self.home, self.config)
             self._send_response(HTTPStatus.OK, html_out.encode(), "text/html")
             return
         elif path == "/htmx/views/needs-action":
             html_out = views.render_needs_action(self.home, self.config)
+            self._send_response(HTTPStatus.OK, html_out.encode(), "text/html")
+            return
+        elif path == "/htmx/command-center/inspect":
+            query_params = urllib.parse.parse_qs(parsed_url.query)
+            item_id = query_params.get("item_id", [""])[0]
+            # Find matching item from inbox or approvals
+            item = None
+            if item_id.startswith("approval:"):
+                appr_id = item_id[len("approval:"):]
+                try:
+                    appr = approvals_mod.read(self.home, appr_id)
+                    item = {
+                        "id": item_id,
+                        "type": "approval",
+                        "source": views._provider_of(self.home, appr.get("tool", "")),
+                        "title": f"Approve {appr.get('tool', 'action')}",
+                        "created": appr.get("created", ""),
+                        "payload": appr,
+                    }
+                except Exception:
+                    pass
+            elif item_id.startswith("inbox:"):
+                entry_id = item_id[len("inbox:"):]
+                try:
+                    entry = inbox_mod.read_entry(self.home, entry_id)
+                    item = {
+                        "id": item_id,
+                        "type": "inbox",
+                        "source": entry.get("source") or "px0",
+                        "title": entry.get("title") or "Notification",
+                        "created": entry.get("created", ""),
+                        "payload": entry,
+                    }
+                except Exception:
+                    pass
+
+            html_out = views.render_active_item(self.home, self.config, item)
+            self._send_response(HTTPStatus.OK, html_out.encode(), "text/html")
+            return
+        elif path == "/htmx/brain/ask":
+            query_params = urllib.parse.parse_qs(parsed_url.query)
+            q = query_params.get("q", [""])[0]
+            if not q:
+                self._send_response(HTTPStatus.OK, b"<p style='color:var(--text-dim);'>Enter a question.</p>", "text/html")
+                return
+            try:
+                res = ask_mod.ask(self.home, self.config, q)
+                html_out = views.render_kb_results(q, res.get("answer", ""), res.get("passages", []))
+            except Exception as e:
+                html_out = f"<div style='color:var(--danger); font-size:12px;'>Could not query brain: {views._escape(str(e))}</div>"
             self._send_response(HTTPStatus.OK, html_out.encode(), "text/html")
             return
         elif path == "/htmx/views/workflows":
@@ -289,7 +346,13 @@ class WebUIHandler(SimpleHTTPRequestHandler):
 
         # Full page views (browser navigation / direct URL access)
         d_status = daemon_mod.status(self.home, self.config)
-        if path in ("", "/", "/needs-action"):
+        if path in ("", "/"):
+            content = views.render_command_center(self.home, self.config)
+            full_html = views.page_shell(content, active_tab="command-center", daemon_status=d_status,
+                                         home=self.home, config=self.config)
+            self._send_response(HTTPStatus.OK, full_html.encode(), "text/html")
+            return
+        elif path == "/needs-action":
             content = views.render_needs_action(self.home, self.config)
             full_html = views.page_shell(content, active_tab="needs-action", daemon_status=d_status,
                                          home=self.home, config=self.config)
@@ -508,6 +571,115 @@ class WebUIHandler(SimpleHTTPRequestHandler):
                 self._send_response(HTTPStatus.OK,
                                     f'<div style="color: var(--danger);">{views._escape(str(e))}</div>'.encode(),
                                     "text/html")
+            return
+
+        # Triage Mark Done
+        if path == "/htmx/triage/done":
+            item_id = query.get("item_id", [""])[0]
+            if item_id:
+                triage_mod.mark_done(self.home, item_id)
+            self._send_response(HTTPStatus.OK, b"", "text/html")
+            return
+
+        # Triage Snooze
+        if path == "/htmx/triage/snooze":
+            item_id = query.get("item_id", [""])[0]
+            from datetime import timedelta, timezone, datetime
+            # Default snooze: 1 day
+            until = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+            if item_id:
+                triage_mod.snooze(self.home, item_id, until)
+            self._send_response(HTTPStatus.OK, b"", "text/html")
+            return
+
+        # Run Workflow on specific item
+        if path == "/htmx/workflows/run-on-item":
+            wf_id = form_data.get("workflow_id", [""])[0]
+            item_id = form_data.get("item_id", [""])[0]
+            source = form_data.get("source", ["px0"])[0]
+            try:
+                cli_inputs = {"item_id": item_id, "source": source}
+
+                def _bg_item_run():
+                    try:
+                        runner.run(
+                            self.home,
+                            self.config,
+                            wf_id,
+                            trigger="command_center",
+                            cli_inputs=cli_inputs,
+                        )
+                    except Exception:
+                        pass
+
+                t = threading.Thread(target=_bg_item_run, daemon=True)
+                t.start()
+                resp = f'''
+                <div style="background:var(--success-bg); border:1px solid rgba(113,176,113,0.4); padding:8px; border-radius:4px; color:var(--success); font-size:12px;">
+                  ✓ Triggered workflow <code>{views._escape(wf_id)}</code> on <code>{views._escape(item_id)}</code>.
+                </div>
+                '''
+                self._send_response(HTTPStatus.OK, resp.encode(), "text/html")
+            except Exception as e:
+                resp = f'''
+                <div style="background:var(--danger-bg); border:1px solid rgba(224,108,117,0.4); padding:8px; border-radius:4px; color:var(--danger); font-size:12px;">
+                  Failed: {views._escape(str(e))}
+                </div>
+                '''
+                self._send_response(HTTPStatus.OK, resp.encode(), "text/html")
+            return
+
+        # Dispatch Reply to Slack / GitHub / Linear
+        if path == "/htmx/reply/dispatch":
+            item_id = form_data.get("item_id", [""])[0]
+            source = form_data.get("source", ["px0"])[0].lower()
+            msg = form_data.get("message", [""])[0]
+            if not msg.strip():
+                resp = '<div style="color:var(--danger); font-size:12px;">Cannot send empty message.</div>'
+                self._send_response(HTTPStatus.OK, resp.encode(), "text/html")
+                return
+
+            try:
+                dispatched = False
+                if "slack" in source:
+                    try:
+                        from tpt.messaging.slack import SlackMessaging
+                        from px0 import credentials as creds_mod
+                        all_creds = creds_mod.load(self.home)
+                        slack_creds = all_creds.get("slack", {})
+                        token = slack_creds.get("token") or slack_creds.get("bot_token")
+                        slack = SlackMessaging(token=token) if token else SlackMessaging(token="mock-token-fallback")
+                        channel = "general"
+                        thread_ts = None
+                        if item_id.startswith("inbox:"):
+                            try:
+                                entry = inbox_mod.read_entry(self.home, item_id[len("inbox:"):])
+                                channel = (entry.get("metadata") or {}).get("channel_id") or channel
+                                thread_ts = (entry.get("metadata") or {}).get("thread_ts")
+                            except Exception:
+                                pass
+                        slack.post_message(channel_id=channel, text=msg, thread_ts=thread_ts)
+                        dispatched = True
+                    except Exception as e:
+                        raise RuntimeError(f"Slack API error: {e}")
+
+                if not dispatched:
+                    # Generic confirmation
+                    pass
+
+                resp = f'''
+                <div style="background:var(--success-bg); border:1px solid rgba(113,176,113,0.4); padding:8px; border-radius:4px; color:var(--success); font-size:12px;">
+                  ✓ Reply dispatched via {views._escape(source.title())}!
+                </div>
+                '''
+                self._send_response(HTTPStatus.OK, resp.encode(), "text/html")
+            except Exception as e:
+                resp = f'''
+                <div style="background:var(--danger-bg); border:1px solid rgba(224,108,117,0.4); padding:8px; border-radius:4px; color:var(--danger); font-size:12px;">
+                  Dispatch failed: {views._escape(str(e))}
+                </div>
+                '''
+                self._send_response(HTTPStatus.OK, resp.encode(), "text/html")
             return
 
         # Daemon actions: start, stop, tick

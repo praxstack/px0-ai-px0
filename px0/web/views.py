@@ -9,10 +9,12 @@ from croniter import croniter
 
 from px0 import (
     approvals as approvals_mod,
+    ask as ask_mod,
     daemon as daemon_mod,
     inbox as inbox_mod,
     runs as runs_mod,
     tools as tools_mod,
+    triage as triage_mod,
     workflow as workflow_mod,
 )
 
@@ -127,6 +129,7 @@ def page_shell(content: str, active_tab: str = "needs-action", daemon_status: di
     t_runs = 'active' if active_tab == 'runs' else ''
     t_daemon = 'active' if active_tab == 'daemon' else ''
     t_na = 'active' if active_tab == 'needs-action' else ''
+    t_cc = 'active' if active_tab == 'command-center' else ''
 
     script_block = """
   <script>
@@ -157,9 +160,10 @@ def page_shell(content: str, active_tab: str = "needs-action", daemon_status: di
 <body>
   <header>
     <div class="logo-area">
-      <a href="/" class="brand" hx-get="/htmx/views/needs-action" hx-target="#main-view" hx-push-url="/">px0<span>web</span></a>
+      <a href="/" class="brand" hx-get="/htmx/views/command-center" hx-target="#main-view" hx-push-url="/">px0<span>web</span></a>
       <nav>
-        <a href="/" class="nav-btn {t_na}" hx-get="/htmx/views/needs-action" hx-target="#main-view" hx-push-url="/">Needs Action</a>
+        <a href="/" class="nav-btn {t_cc}" hx-get="/htmx/views/command-center" hx-target="#main-view" hx-push-url="/">Command Center</a>
+        <a href="/needs-action" class="nav-btn {t_na}" hx-get="/htmx/views/needs-action" hx-target="#main-view" hx-push-url="/needs-action">Needs Action</a>
         <a href="/stats" class="nav-btn {t_stats}" hx-get="/htmx/views/dashboard" hx-target="#main-view" hx-push-url="/stats">Stats</a>
         <a href="/workflows" class="nav-btn {t_wf}" hx-get="/htmx/views/workflows" hx-target="#main-view" hx-push-url="/workflows">Workflows</a>
         <a href="/schedules" class="nav-btn {t_sched}" hx-get="/htmx/views/schedules" hx-target="#main-view" hx-push-url="/schedules">Schedules</a>
@@ -539,6 +543,261 @@ def render_needs_action(home, config) -> str:
       pxLoadPortal('{default_app}');
     </script>
     """
+
+
+def render_command_center(home, config, active_item: dict | None = None) -> str:
+    """The 3-column unified command center:
+    1. Filtered activity stream with triage actions (Mark Done, Snooze)
+    2. Active context inspection, manual workflow execution dropdown, & draft reply
+    3. Knowledge base & Ask Brain panel
+    """
+    triage_map = triage_mod.load(home)
+
+    # Gather items from inbox & approvals
+    pending = approvals_mod.listing(home, config, status=approvals_mod.PENDING)
+    needs_action = inbox_mod.listing(home, status=inbox_mod.UNREAD, attention=inbox_mod.NEEDS_ACTION)
+
+    items = []
+    for a in pending:
+        items.append({
+            "id": f"approval:{a['id']}",
+            "type": "approval",
+            "source": _provider_of(home, a.get("tool", "")),
+            "title": f"Approve {a.get('tool', 'action')}",
+            "created": a.get("created", ""),
+            "payload": a,
+        })
+    for e in needs_action:
+        items.append({
+            "id": f"inbox:{e['id']}",
+            "type": "inbox",
+            "source": e.get("source") or "px0",
+            "title": e.get("title") or "Notification",
+            "created": e.get("created", ""),
+            "payload": e,
+        })
+
+    # Filter out triaged items (done or snoozed)
+    visible_items = [it for it in items if triage_mod.is_visible(it["id"], triage_map)]
+
+    # Fallback to first item if none active
+    curr_active = active_item or (visible_items[0] if visible_items else None)
+
+    # 1. Render Left Column: Stream Cards
+    stream_cards = []
+    for it in visible_items:
+        it_id = _escape(it["id"])
+        is_sel = curr_active and curr_active["id"] == it["id"]
+        source = _escape(it["source"])
+        title = _escape(it["title"])
+        created = _escape(it.get("created", "")[:16].replace("T", " "))
+        stream_cards.append(f"""
+        <div class="stream-card {'active' if is_sel else ''}" id="stream-card-{it_id}"
+             hx-get="/htmx/command-center/inspect?item_id={it_id}"
+             hx-target="#active-item-container" hx-swap="innerHTML">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+            <span class="badge badge-dim">{source}</span>
+            <span class="code-font" style="font-size:11px; color:var(--text-dim);">{created}</span>
+          </div>
+          <div style="font-weight:500; font-size:13px; margin-bottom:6px;">{title}</div>
+          <div class="triage-actions" onclick="event.stopPropagation();">
+            <button class="btn-triage btn-triage-done"
+                    hx-post="/htmx/triage/done?item_id={it_id}"
+                    hx-target="#stream-card-{it_id}" hx-swap="outerHTML">
+              ✓ Done
+            </button>
+            <button class="btn-triage"
+                    hx-post="/htmx/triage/snooze?item_id={it_id}"
+                    hx-target="#stream-card-{it_id}" hx-swap="outerHTML">
+              ⏱ Snooze
+            </button>
+          </div>
+        </div>
+        """)
+
+    stream_col = "".join(stream_cards) or '<div class="empty-state"><p>Inbox Zero! No pending action items.</p></div>'
+
+    # 2. Render Middle Column: Active Item Context + Workflow Runner + Draft Reply
+    active_html = render_active_item(home, config, curr_active)
+
+    # 3. Render Right Column: Knowledge Base Panel
+    kb_html = render_kb_panel(home, config)
+
+    return f"""
+    <div class="command-center">
+      <!-- Column 1: Filtered Activity Stream -->
+      <div class="command-center-stream">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <h3 style="font-size:14px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-dim);">
+            Action Stream ({len(visible_items)})
+          </h3>
+          <span class="badge badge-dim">Synced</span>
+        </div>
+        <div id="stream-list">
+          {stream_col}
+        </div>
+      </div>
+
+      <!-- Column 2: Active Context & Actions -->
+      <div id="active-item-container">
+        {active_html}
+      </div>
+
+      <!-- Column 3: Knowledge Base & Ask Brain -->
+      <div class="command-center-kb">
+        {kb_html}
+      </div>
+    </div>
+    """
+
+
+def render_active_item(home, config, item: dict | None) -> str:
+    """Renders the middle column: context detail, workflow runner dropdown, and draft reply box."""
+    if not item:
+        return """
+        <div class="active-item-panel">
+          <div class="empty-state"><p>Select an item from the stream to inspect context and take action.</p></div>
+        </div>
+        """
+
+    item_id = _escape(item["id"])
+    source = _escape(item.get("source", "px0"))
+    title = _escape(item.get("title", ""))
+    payload = item.get("payload", {})
+
+    body_md = ""
+    if item["type"] == "inbox":
+        body_md = inbox_mod.body(home, config, payload)
+    elif item["type"] == "approval":
+        body_md = f"**Tool**: `{_escape(payload.get('tool', ''))}`\n\n```json\n{json.dumps(payload.get('args', {}), indent=2)}\n```"
+
+    # Available workflows for triggering
+    all_wfs = workflow_mod.load_all(home)
+    wf_options = []
+    for wfid, wf in sorted(all_wfs.items()):
+        wf_options.append(f'<option value="{_escape(wfid)}">{_escape(wf.description or wfid)}</option>')
+
+    wf_options_html = "".join(wf_options)
+
+    return f"""
+    <div class="active-item-panel" id="active-panel-{item_id}">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+        <div>
+          <span class="badge badge-info" style="margin-right:6px;">{source}</span>
+          <span class="code-font" style="font-size:12px; color:var(--text-dim);">{item_id}</span>
+        </div>
+        <div class="triage-actions">
+          <button class="btn btn-secondary btn-sm"
+                  hx-post="/htmx/triage/done?item_id={item_id}"
+                  hx-target="#stream-card-{item_id}" hx-swap="outerHTML">
+            Mark Done
+          </button>
+          <button class="btn btn-secondary btn-sm"
+                  hx-post="/htmx/triage/snooze?item_id={item_id}"
+                  hx-target="#stream-card-{item_id}" hx-swap="outerHTML">
+            Snooze
+          </button>
+        </div>
+      </div>
+
+      <h2 style="font-size:16px; margin-bottom:12px;">{title}</h2>
+
+      <!-- Workflow Trigger Bar -->
+      <div class="workflow-runner-bar">
+        <span style="font-size:12px; font-weight:500; color:var(--text-dim);">Run Workflow:</span>
+        <form hx-post="/htmx/workflows/run-on-item" hx-target="#wf-run-result" hx-swap="innerHTML" style="display:flex; gap:6px; flex:1;">
+          <input type="hidden" name="item_id" value="{item_id}">
+          <input type="hidden" name="source" value="{source}">
+          <select name="workflow_id" class="input-select" style="flex:1; background:var(--bg); color:var(--text); border:1px solid var(--panel-border); padding:4px 8px; border-radius:var(--radius);">
+            {wf_options_html}
+          </select>
+          <button type="submit" class="btn btn-primary btn-sm">▶ Run</button>
+        </form>
+      </div>
+      <div id="wf-run-result" style="margin-bottom:12px;"></div>
+
+      <!-- Item Context Body -->
+      <div class="markdown-body" style="background:rgba(0,0,0,0.15); padding:12px; border-radius:var(--radius); margin-bottom:16px;">
+        {render_markdown(body_md)}
+      </div>
+
+      <!-- Draft & Send Reply Box -->
+      <div class="reply-box">
+        <h4 style="font-size:13px; font-weight:600; margin-bottom:8px; color:var(--text-dim);">Draft & Send Reply</h4>
+        <form hx-post="/htmx/reply/dispatch" hx-target="#reply-status" hx-swap="innerHTML">
+          <input type="hidden" name="item_id" value="{item_id}">
+          <input type="hidden" name="source" value="{source}">
+          <textarea id="reply-text" name="message" class="reply-textarea" placeholder="Write markdown reply or use Knowledge Base to insert context..."></textarea>
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-size:11px; color:var(--text-dim);">Supports Markdown. Dispatches via {source.title()} API.</span>
+            <button type="submit" class="btn btn-primary btn-sm">Send Reply ↵</button>
+          </div>
+        </form>
+        <div id="reply-status" style="margin-top:8px;"></div>
+      </div>
+    </div>
+    """
+
+
+def render_kb_panel(home, config) -> str:
+    """Renders the Knowledge Base & Ask Brain sidebar panel."""
+    return """
+    <div class="kb-panel">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h3 style="font-size:13px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-dim);">
+          🧠 Knowledge Base & Ask
+        </h3>
+      </div>
+      <form hx-get="/htmx/brain/ask" hx-target="#kb-results" hx-swap="innerHTML" style="margin-bottom:10px;">
+        <input type="text" name="q" class="kb-input" placeholder="Ask brain / search docs & guidelines..." required>
+      </form>
+      <div id="kb-results">
+        <p style="color:var(--text-dim); font-size:12px;">Ask questions across your notes, guidelines, and memory.</p>
+      </div>
+    </div>
+    """
+
+
+def render_kb_results(question: str, answer: str, passages: list) -> str:
+    """Renders retrieval results from px0 ask with an 'Insert into Draft' action."""
+    passages_html = []
+    for p in passages[:3]:
+        p_path = _escape(getattr(p, "path", ""))
+        p_text = _escape(getattr(p, "text", "")[:140] + "...")
+        passages_html.append(f"""
+        <div class="kb-result-card">
+          <div style="font-weight:600; margin-bottom:2px;">{p_path}</div>
+          <div style="color:var(--text-dim); margin-bottom:4px;">{p_text}</div>
+          <button type="button" class="btn btn-secondary btn-sm" style="font-size:10px; padding:2px 6px;"
+                  onclick="insertIntoDraft('{_escape(getattr(p, 'text', '').replace("'", "\\'").replace('\\n', ' '))}')">
+            + Insert into Draft
+          </button>
+        </div>
+        """)
+
+    escaped_ans = _escape(answer)
+    return f"""
+    <div style="margin-top:10px;">
+      <div style="font-size:12px; font-weight:600; color:var(--accent); margin-bottom:4px;">Q: {_escape(question)}</div>
+      <div class="markdown-body" style="font-size:12px; margin-bottom:10px;">{render_markdown(answer)}</div>
+      <button type="button" class="btn btn-secondary btn-sm" style="font-size:11px; margin-bottom:12px; width:100%;"
+              onclick="insertIntoDraft('{escaped_ans.replace("'", "\\'").replace('\\n', ' ')}')">
+        Quote Answer into Draft
+      </button>
+      <h5 style="font-size:11px; color:var(--text-dim); margin-bottom:6px; text-transform:uppercase;">Relevant Passages:</h5>
+      {"".join(passages_html)}
+    </div>
+    <script>
+      function insertIntoDraft(text) {{
+        var el = document.getElementById('reply-text');
+        if (el) {{
+          el.value = (el.value ? el.value + '\\n\\n' : '') + text;
+          el.focus();
+        }}
+      }}
+    </script>
+    """
+
 
 
 def render_inbox_entry_detail_modal(home, config, entry_id: str) -> str:
