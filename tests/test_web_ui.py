@@ -9,7 +9,15 @@ from pathlib import Path
 
 import pytest
 
-from px0 import authoring, config as config_mod, daemon as daemon_mod, workflow as workflow_mod
+from px0 import (
+    approvals as approvals_mod,
+    authoring,
+    config as config_mod,
+    daemon as daemon_mod,
+    inbox as inbox_mod,
+    tools,
+    workflow as workflow_mod,
+)
 from px0.web import server as web_server
 
 
@@ -82,7 +90,7 @@ def test_static_assets(web_test_env):
 def test_full_pages(web_test_env):
     base_url = web_test_env["base_url"]
     
-    for path in ["/", "/workflows", "/schedules", "/runs", "/daemon"]:
+    for path in ["/", "/needs-action", "/workflows", "/schedules", "/runs", "/daemon"]:
         with urllib.request.urlopen(f"{base_url}{path}") as resp:
             assert resp.status == 200
             html = resp.read().decode()
@@ -202,3 +210,96 @@ def test_workflow_run_trigger(web_test_env):
         assert resp.status == 200
         html = resp.read().decode()
         assert "Run initiated successfully" in html
+
+
+def test_needs_action_view(web_test_env):
+    """The single glance-view: a pending approval and a mix of needs_action
+    and fyi inbox entries, grouped by source."""
+    home, config = web_test_env["home"], web_test_env["config"]
+    base_url = web_test_env["base_url"]
+
+    approvals_mod.queue(home, run_id="r1", workflow_id="daily-test",
+                        tool="slack.post_message", args={"channel": "#eng"})
+    inbox_mod.deliver(home, config, workflow_id="daily-test", run_id="r2",
+                      text="PR #42 waiting on your review", source="github",
+                      attention=inbox_mod.NEEDS_ACTION)
+    inbox_mod.deliver(home, config, workflow_id="daily-test", run_id="r3",
+                      text="Friday digest posted", source="slack",
+                      attention=inbox_mod.FYI)
+
+    with urllib.request.urlopen(f"{base_url}/api/views/needs-action") as resp:
+        assert resp.status == 200
+        html = resp.read().decode()
+        assert "Pending Approvals" in html
+        assert "slack.post_message" in html
+        assert "Needs your attention" in html
+        assert "github" in html
+        assert "FYI" in html
+
+    with urllib.request.urlopen(f"{base_url}/api/needs-action/badge") as resp:
+        assert resp.status == 200
+        html = resp.read().decode()
+        assert "needs action: 2" in html  # 1 pending approval + 1 needs_action entry
+
+
+def test_needs_action_empty_state(web_test_env):
+    base_url = web_test_env["base_url"]
+    with urllib.request.urlopen(f"{base_url}/api/views/needs-action") as resp:
+        assert resp.status == 200
+        html = resp.read().decode()
+        assert "Nothing waiting on you" in html
+
+
+def test_approval_actions(web_test_env, monkeypatch):
+    home, config = web_test_env["home"], web_test_env["config"]
+    base_url = web_test_env["base_url"]
+    monkeypatch.setattr(tools, "call", lambda *a: {"ok": True})
+
+    approved = approvals_mod.queue(home, run_id="r1", workflow_id="daily-test",
+                                   tool="slack.post_message", args={"channel": "#eng"})
+    req = urllib.request.Request(
+        f"{base_url}/api/approvals/{approved['id']}/approve", method="POST", data=b"")
+    with urllib.request.urlopen(req) as resp:
+        assert resp.status == 200
+    assert approvals_mod.read(home, approved["id"])["status"] == approvals_mod.APPROVED
+
+    rejected = approvals_mod.queue(home, run_id="r1", workflow_id="daily-test",
+                                    tool="slack.post_message", args={"channel": "#eng"})
+    data = urllib.parse.urlencode({"reason": "wrong channel"}).encode()
+    req = urllib.request.Request(
+        f"{base_url}/api/approvals/{rejected['id']}/reject", method="POST", data=data)
+    with urllib.request.urlopen(req) as resp:
+        assert resp.status == 200
+    resolved = approvals_mod.read(home, rejected["id"])
+    assert resolved["status"] == approvals_mod.REJECTED
+    assert resolved["detail"] == "wrong channel"
+
+
+def test_inbox_mark_from_web(web_test_env):
+    home, config = web_test_env["home"], web_test_env["config"]
+    base_url = web_test_env["base_url"]
+    entry = inbox_mod.deliver(home, config, workflow_id="daily-test", run_id="r1",
+                              text="something", source="github",
+                              attention=inbox_mod.NEEDS_ACTION)
+
+    data = urllib.parse.urlencode({"status": "archived"}).encode()
+    req = urllib.request.Request(
+        f"{base_url}/api/inbox/{entry['id']}/mark", method="POST", data=data)
+    with urllib.request.urlopen(req) as resp:
+        assert resp.status == 200
+    assert inbox_mod.read_entry(home, entry["id"])["status"] == inbox_mod.ARCHIVED
+
+
+def test_inbox_entry_detail_modal(web_test_env):
+    home, config = web_test_env["home"], web_test_env["config"]
+    base_url = web_test_env["base_url"]
+    entry = inbox_mod.deliver(home, config, workflow_id="daily-test", run_id="r1",
+                              text="something worth reading", source="github",
+                              attention=inbox_mod.NEEDS_ACTION)
+
+    with urllib.request.urlopen(f"{base_url}/api/inbox/{entry['id']}") as resp:
+        assert resp.status == 200
+        html = resp.read().decode()
+        assert "something worth reading" in html
+    # Opening it marks it read, same as `px0 inbox read`
+    assert inbox_mod.read_entry(home, entry["id"])["status"] == inbox_mod.READ

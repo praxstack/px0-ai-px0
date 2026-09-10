@@ -547,7 +547,9 @@ def cmd_inbox(home: Path, config: dict, args) -> None:
     if verb == "list":
         status = None if getattr(args, "all", False) else inbox_mod.UNREAD
         entries = inbox_mod.listing(home, status=status,
-                                    workflow=getattr(args, "workflow", None))
+                                    workflow=getattr(args, "workflow", None),
+                                    source=getattr(args, "source", None),
+                                    attention=getattr(args, "attention", None))
         if getattr(args, "json", False):
             _dump(entries)
             return
@@ -558,9 +560,11 @@ def cmd_inbox(home: Path, config: dict, args) -> None:
         width = max(len(e["id"]) for e in entries)
         for entry in entries:
             state = "" if entry["status"] == inbox_mod.UNREAD else f"  [{entry['status']}]"
+            flag = "  [needs action]" if entry.get("attention") == inbox_mod.NEEDS_ACTION else ""
             ui.field(entry["id"],
                      f"{entry['title']}  {ui.dim(entry['workflow_id'])} "
-                     f"{ui.dim(_age(entry['created']))}{state}", width=width)
+                     f"{ui.dim(entry.get('source', ''))} "
+                     f"{ui.dim(_age(entry['created']))}{state}{flag}", width=width)
         print(flush=True)
         ui.hint("read one:")
         ui.command(f"px0 inbox read {entries[0]['id']}")

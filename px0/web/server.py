@@ -13,8 +13,10 @@ from pathlib import Path
 from typing import Any
 
 from px0 import (
+    approvals as approvals_mod,
     authoring,
     daemon as daemon_mod,
+    inbox as inbox_mod,
     paths,
     runner,
     runs as runs_mod,
@@ -56,9 +58,19 @@ class WebUIHandler(SimpleHTTPRequestHandler):
             self._send_response(HTTPStatus.OK, html_out.encode(), "text/html")
             return
 
+        # Needs-action polling badge
+        if path == "/api/needs-action/badge":
+            html_out = views.render_needs_action_badge(self.home, self.config)
+            self._send_response(HTTPStatus.OK, html_out.encode(), "text/html")
+            return
+
         # HTMX partial view updates
         if path == "/api/views/dashboard":
             html_out = views.render_dashboard(self.home, self.config)
+            self._send_response(HTTPStatus.OK, html_out.encode(), "text/html")
+            return
+        elif path == "/api/views/needs-action":
+            html_out = views.render_needs_action(self.home, self.config)
             self._send_response(HTTPStatus.OK, html_out.encode(), "text/html")
             return
         elif path == "/api/views/workflows":
@@ -115,31 +127,48 @@ class WebUIHandler(SimpleHTTPRequestHandler):
             self._send_response(HTTPStatus.OK, html_out.encode(), "text/html")
             return
 
+        if path.startswith("/api/inbox/"):
+            entry_id = path[len("/api/inbox/"):]
+            html_out = views.render_inbox_entry_detail_modal(self.home, self.config, entry_id)
+            self._send_response(HTTPStatus.OK, html_out.encode(), "text/html")
+            return
+
         # Full page views (browser navigation / direct URL access)
         d_status = daemon_mod.status(self.home, self.config)
         if path in ("", "/"):
             content = views.render_dashboard(self.home, self.config)
-            full_html = views.page_shell(content, active_tab="dashboard", daemon_status=d_status)
+            full_html = views.page_shell(content, active_tab="dashboard", daemon_status=d_status,
+                                         home=self.home, config=self.config)
+            self._send_response(HTTPStatus.OK, full_html.encode(), "text/html")
+            return
+        elif path == "/needs-action":
+            content = views.render_needs_action(self.home, self.config)
+            full_html = views.page_shell(content, active_tab="needs-action", daemon_status=d_status,
+                                         home=self.home, config=self.config)
             self._send_response(HTTPStatus.OK, full_html.encode(), "text/html")
             return
         elif path == "/workflows":
             content = views.render_workflows_list(self.home, self.config)
-            full_html = views.page_shell(content, active_tab="workflows", daemon_status=d_status)
+            full_html = views.page_shell(content, active_tab="workflows", daemon_status=d_status,
+                                         home=self.home, config=self.config)
             self._send_response(HTTPStatus.OK, full_html.encode(), "text/html")
             return
         elif path == "/schedules":
             content = views.render_schedules_list(self.home, self.config)
-            full_html = views.page_shell(content, active_tab="schedules", daemon_status=d_status)
+            full_html = views.page_shell(content, active_tab="schedules", daemon_status=d_status,
+                                         home=self.home, config=self.config)
             self._send_response(HTTPStatus.OK, full_html.encode(), "text/html")
             return
         elif path == "/runs":
             content = views.render_runs_list(self.config)
-            full_html = views.page_shell(content, active_tab="runs", daemon_status=d_status)
+            full_html = views.page_shell(content, active_tab="runs", daemon_status=d_status,
+                                         home=self.home, config=self.config)
             self._send_response(HTTPStatus.OK, full_html.encode(), "text/html")
             return
         elif path == "/daemon":
             content = views.render_daemon_view(self.home, self.config)
-            full_html = views.page_shell(content, active_tab="daemon", daemon_status=d_status)
+            full_html = views.page_shell(content, active_tab="daemon", daemon_status=d_status,
+                                         home=self.home, config=self.config)
             self._send_response(HTTPStatus.OK, full_html.encode(), "text/html")
             return
 
@@ -265,6 +294,48 @@ class WebUIHandler(SimpleHTTPRequestHandler):
                 </div>
                 '''
                 self._send_response(HTTPStatus.OK, err_html.encode(), "text/html")
+            return
+
+        # Approve or reject a queued write, inline from the needs-action view
+        if path.startswith("/api/approvals/") and path.endswith("/approve"):
+            approval_id = path[len("/api/approvals/"):-len("/approve")]
+            try:
+                result = approvals_mod.approve(self.home, self.config, approval_id)
+                if result.get("status") == approvals_mod.FAILED:
+                    body = (f'<div style="color: var(--danger);">the tool call failed: '
+                            f'{views._escape(result.get("detail", ""))}</div>').encode()
+                else:
+                    body = b""
+                self._send_response(HTTPStatus.OK, body, "text/html")
+            except approvals_mod.ApprovalError as e:
+                self._send_response(HTTPStatus.OK,
+                                    f'<div style="color: var(--danger);">{views._escape(str(e))}</div>'.encode(),
+                                    "text/html")
+            return
+
+        if path.startswith("/api/approvals/") and path.endswith("/reject"):
+            approval_id = path[len("/api/approvals/"):-len("/reject")]
+            reason = form_data.get("reason", [""])[0]
+            try:
+                approvals_mod.reject(self.home, self.config, approval_id, reason=reason)
+                self._send_response(HTTPStatus.OK, b"", "text/html")
+            except approvals_mod.ApprovalError as e:
+                self._send_response(HTTPStatus.OK,
+                                    f'<div style="color: var(--danger);">{views._escape(str(e))}</div>'.encode(),
+                                    "text/html")
+            return
+
+        # Mark/archive an inbox entry from the needs-action view
+        if path.startswith("/api/inbox/") and path.endswith("/mark"):
+            entry_id = path[len("/api/inbox/"):-len("/mark")]
+            new_status = form_data.get("status", [inbox_mod.READ])[0]
+            try:
+                inbox_mod.mark(self.home, entry_id, new_status)
+                self._send_response(HTTPStatus.OK, b"", "text/html")
+            except inbox_mod.InboxError as e:
+                self._send_response(HTTPStatus.OK,
+                                    f'<div style="color: var(--danger);">{views._escape(str(e))}</div>'.encode(),
+                                    "text/html")
             return
 
         # Daemon actions: start, stop, tick

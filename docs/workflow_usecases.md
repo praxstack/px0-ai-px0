@@ -1,6 +1,6 @@
 # Workflow use cases
 
-116 jobs px0 could run, each written as the sentence you would tell `px0 workflows new` during its interview. This page is a catalogue of ideas, not a set of shipped workflows: px0 ships none, and every row here is one command away from existing in your store.
+120 jobs px0 could run, each written as the sentence you would tell `px0 workflows new` during its interview. This page is a catalogue of ideas, not a set of shipped workflows: px0 ships none, and every row here is one command away from existing in your store.
 
 Toolkit names come from Composio's live catalogue, which held 1,364 toolkits when this page was written. Use `px0 tools list` to see what your store can already call.
 
@@ -70,7 +70,7 @@ Two things shape the cadence column:
 ## Contents
 
 - [Engineering: code and change](#engineering-code-and-change) (13)
-- [Developer productivity](#developer-productivity) (16)
+- [Developer productivity](#developer-productivity) (20)
 - [Engineering management](#engineering-management) (18)
 - [Incidents and reliability](#incidents-and-reliability) (9)
 - [Product and analytics](#product-and-analytics) (9)
@@ -125,6 +125,10 @@ One engineer's own day rather than reports about code. These assemble the contex
 | Find two focus blocks in next week's calendar and hold them before anyone else does                  | `googlecalendar` -> `googlecalendar`           | Fri 16:00          |
 | Extract the recurring lessons from review comments I received this month                             | `github` -> `file`                             | monthly            |
 | Assemble my brag doc entry for the quarter: what I shipped, reviewed, fixed, and unblocked           | `github`, `jira` -> `googledocs` + guideline   | quarterly          |
+| Tell me what I missed in my Slack channels and DMs since I last checked                              | `slack` -> `file`                              | daily 08:00        |
+| Show me pull requests waiting on my review and comments addressed to me I have not replied to        | `github` -> `file`                             | daily 09:00        |
+| Show me tickets assigned to me, overdue, or where someone is waiting on me                            | `linear` -> `file`                             | daily 08:00        |
+| Show me docs shared with me that need a read or a sign-off                                            | `notion` -> `file`                             | daily 08:00        |
 
 ## Engineering management
 

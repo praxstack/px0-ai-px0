@@ -511,7 +511,7 @@ asked for.
 px0 workflows recipes
 ```
 
-The full catalogue of 116 is in [Workflow use cases](../workflow_usecases.md).
+The full catalogue of 120 is in [Workflow use cases](../workflow_usecases.md).
 
 ---
 

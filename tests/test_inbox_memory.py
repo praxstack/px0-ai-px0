@@ -153,6 +153,85 @@ def test_retention_never_drops_what_you_have_not_read(tmp_home, config):
     assert [e["status"] for e in remaining] == [inbox.UNREAD]
 
 
+# --- source and attention --------------------------------------------------
+
+def test_a_delivered_entry_defaults_to_fyi_and_px0(tmp_home, config, monkeypatch):
+    """A workflow that declares no tools and no `output.attention` is the
+    common case, and should not need to opt in to a sensible default."""
+    _write(tmp_home)
+    monkeypatch.setattr(harness, "invoke_detailed",
+                        lambda *a, **kw: harness.Reply(text="output"))
+    runner.run(tmp_home, config, "demo", trigger="schedule")
+    entry = inbox.listing(tmp_home)[0]
+    assert entry["source"] == "px0"
+    assert entry["attention"] == inbox.FYI
+
+
+def test_output_attention_needs_action_is_carried_onto_the_entry(tmp_home, config, monkeypatch):
+    (paths.workflows_dir(tmp_home) / "demo.md").write_text(
+        "---\nid: demo\ndescription: A demo\noutput:\n  target: stdout\n"
+        "  attention: needs_action\n---\n\nBody.\n")
+    monkeypatch.setattr(harness, "invoke_detailed",
+                        lambda *a, **kw: harness.Reply(text="output"))
+    runner.run(tmp_home, config, "demo", trigger="schedule")
+    entry = inbox.listing(tmp_home)[0]
+    assert entry["attention"] == inbox.NEEDS_ACTION
+
+
+def test_listing_filters_by_source_and_attention(tmp_home, config):
+    a = inbox.deliver(tmp_home, config, workflow_id="w1", run_id="r1", text="a",
+                      source="github", attention=inbox.NEEDS_ACTION)
+    inbox.deliver(tmp_home, config, workflow_id="w2", run_id="r2", text="b",
+                  source="slack", attention=inbox.FYI)
+    assert [e["id"] for e in inbox.listing(tmp_home, source="github")] == [a["id"]]
+    assert [e["id"] for e in inbox.listing(tmp_home, attention=inbox.NEEDS_ACTION)] == [a["id"]]
+
+
+def test_deliver_falls_back_to_fyi_on_a_bad_attention_value(tmp_home, config):
+    """A run must not lose its whole delivery over an invalid value here."""
+    entry = inbox.deliver(tmp_home, config, workflow_id="w1", run_id="r1",
+                          text="a", attention="urgent!!")
+    assert entry["attention"] == inbox.FYI
+
+
+def test_infer_source_reads_what_the_run_actually_called(tmp_home):
+    from types import SimpleNamespace
+    wf = SimpleNamespace(tools=[], inputs=[])
+    tool_calls = [{"tool": "github.list_my_prs"}, {"tool": "github.list_my_prs"},
+                  {"tool": "slack.post_message"}]
+    assert inbox.infer_source(tmp_home, wf, tool_calls) == "github"
+
+
+def test_infer_source_falls_back_to_declared_tools_with_no_calls(tmp_home):
+    from types import SimpleNamespace
+    wf = SimpleNamespace(tools=["slack.post_message"], inputs=[])
+    assert inbox.infer_source(tmp_home, wf, []) == "slack"
+
+
+def test_infer_source_falls_back_to_px0_with_nothing_to_go_on(tmp_home):
+    from types import SimpleNamespace
+    wf = SimpleNamespace(tools=[], inputs=[])
+    assert inbox.infer_source(tmp_home, wf, []) == "px0"
+
+
+def test_output_attention_rejects_unknown_values(tmp_home):
+    (paths.workflows_dir(tmp_home) / "demo.md").write_text(
+        "---\nid: demo\ndescription: A demo\noutput:\n  target: stdout\n"
+        "  attention: someday\n---\n\nBody.\n")
+    wf = workflow_mod.load(tmp_home, "demo")
+    errors = workflow_mod.validate(wf, tmp_home)
+    assert any("output.attention" in e for e in errors)
+
+
+def test_output_attention_accepts_both_known_values(tmp_home):
+    for value in ("fyi", "needs_action"):
+        (paths.workflows_dir(tmp_home) / "demo.md").write_text(
+            f"---\nid: demo\ndescription: A demo\noutput:\n  target: stdout\n"
+            f"  attention: {value}\n---\n\nBody.\n")
+        wf = workflow_mod.load(tmp_home, "demo")
+        assert workflow_mod.validate(wf, tmp_home) == []
+
+
 # --- memory ---------------------------------------------------------------
 
 def test_a_memory_is_a_file_you_can_read(tmp_home):

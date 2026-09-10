@@ -1107,7 +1107,9 @@ def _run_once(
     if inbox_mod.should_deliver(config, wf, trigger):
         entry = inbox_mod.deliver(
             home, config, workflow_id=workflow_id, run_id=run_id,
-            text=output_text or "", path=output_info.get("path"), trigger=trigger)
+            text=output_text or "", path=output_info.get("path"), trigger=trigger,
+            source=inbox_mod.infer_source(home, wf, tool_calls),
+            attention=wf.output.get("attention", inbox_mod.FYI))
         output_info["inbox_id"] = entry["id"]
     runs_mod.append_event(config, run_id, "output",
                           target=output_info.get("target"),
@@ -1218,10 +1220,13 @@ def _run_pipeline(
     # pipeline is the longest-running thing px0 does and the least likely to
     # have anyone watching when it finishes.
     if inbox_mod.should_deliver(config, wf, trigger):
+        final_tool_calls = stages[-1].get("tool_calls", []) if stages else []
         entry = inbox_mod.deliver(
             home, config, workflow_id=wf.id, run_id=run_id,
             text=final_output.get("text", ""), path=final_output.get("path"),
-            trigger=trigger)
+            trigger=trigger,
+            source=inbox_mod.infer_source(home, wf, final_tool_calls),
+            attention=wf.output.get("attention", inbox_mod.FYI))
         final_output = {**final_output, "inbox_id": entry["id"]}
     record.update(
         outcome="success", stages=stages, skipped=skipped,

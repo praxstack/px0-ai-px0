@@ -18,7 +18,7 @@ WORKFLOWS: dict[str, str] = {}
 
 
 # (id, the sentence, what it touches). Drawn from docs/workflow_usecases.md and
-# kept short: this is a nudge, not a catalogue. The full 116 are in the docs,
+# kept short: this is a nudge, not a catalogue. The full 120 are in the docs,
 # and `px0 workflows recipes --all` points there.
 RECIPES: list[tuple[str, str, str]] = [
     ("friday-pr-digest",
@@ -57,4 +57,19 @@ RECIPES: list[tuple[str, str, str]] = [
      "Every weekday at 9am, draft my standup from yesterday's commits and hold "
      "it for me to approve before posting",
      "GitHub, Slack"),
+    ("slack-catch-up",
+     "Every morning, tell me what I missed in my Slack channels and DMs "
+     "since I last checked",
+     "Slack"),
+    ("pr-attention",
+     "Show me pull requests waiting on my review and comments addressed to "
+     "me that I haven't replied to",
+     "GitHub"),
+    ("linear-attention",
+     "Show me Linear tickets assigned to me, overdue, or where someone's "
+     "waiting on me",
+     "Linear"),
+    ("docs-attention",
+     "Show me docs shared with me that need a read or a sign-off",
+     "Notion, Google Docs"),
 ]
