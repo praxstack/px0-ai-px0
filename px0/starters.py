@@ -143,6 +143,16 @@ RECIPES: list[tuple[str, str, str]] = [
     ("docs-attention",
      "Show me docs shared with me that need a read or a sign-off",
      "Notion, Google Docs"),
+    ("pr-comment-nudge",
+     "When one of my open pull requests has gone 2 days without a review, "
+     "draft a friendly nudge comment and hold it for my approval before "
+     "posting it",
+     "GitHub"),
+    ("linear-triage",
+     "Turn new bug reports into triaged Linear issues, or update the "
+     "matching issue when there's new information, holding each one for my "
+     "approval before it writes",
+     "Linear"),
 ]
 
 

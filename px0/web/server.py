@@ -3,8 +3,6 @@
 import os
 import signal
 import socketserver
-import subprocess
-import sys
 import threading
 import urllib.parse
 from http import HTTPStatus
@@ -20,6 +18,7 @@ from px0 import (
     paths,
     runner,
     runs as runs_mod,
+    ui,
     workflow as workflow_mod,
 )
 from px0.web import views
@@ -61,6 +60,21 @@ class WebUIHandler(SimpleHTTPRequestHandler):
         # Needs-action polling badge
         if path == "/api/needs-action/badge":
             html_out = views.render_needs_action_badge(self.home, self.config)
+            self._send_response(HTTPStatus.OK, html_out.encode(), "text/html")
+            return
+
+        # Deterministic per-app live data (no LLM/workflow involved) for one
+        # needs-action tab, persisted at output/portal/<app>.md -- a workflow
+        # can write that same path itself. Served straight from disk; a live
+        # fetch only happens here the very first time the file doesn't exist.
+        if path.startswith("/api/portal/"):
+            app = path[len("/api/portal/"):]
+            if app not in dict(views.APP_TABS):
+                self._send_response(HTTPStatus.NOT_FOUND, b"unknown app", "text/plain")
+                return
+            from px0 import portal as portal_mod
+            text, updated_at = portal_mod.load_or_refresh(app, self.home, self.config)
+            html_out = views.render_portal_section(app, text, updated_at)
             self._send_response(HTTPStatus.OK, html_out.encode(), "text/html")
             return
 
@@ -135,15 +149,15 @@ class WebUIHandler(SimpleHTTPRequestHandler):
 
         # Full page views (browser navigation / direct URL access)
         d_status = daemon_mod.status(self.home, self.config)
-        if path in ("", "/"):
-            content = views.render_dashboard(self.home, self.config)
-            full_html = views.page_shell(content, active_tab="dashboard", daemon_status=d_status,
+        if path in ("", "/", "/needs-action"):
+            content = views.render_needs_action(self.home, self.config)
+            full_html = views.page_shell(content, active_tab="needs-action", daemon_status=d_status,
                                          home=self.home, config=self.config)
             self._send_response(HTTPStatus.OK, full_html.encode(), "text/html")
             return
-        elif path == "/needs-action":
-            content = views.render_needs_action(self.home, self.config)
-            full_html = views.page_shell(content, active_tab="needs-action", daemon_status=d_status,
+        elif path == "/stats":
+            content = views.render_dashboard(self.home, self.config)
+            full_html = views.page_shell(content, active_tab="stats", daemon_status=d_status,
                                          home=self.home, config=self.config)
             self._send_response(HTTPStatus.OK, full_html.encode(), "text/html")
             return
@@ -182,6 +196,24 @@ class WebUIHandler(SimpleHTTPRequestHandler):
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length).decode() if content_length > 0 else ""
         form_data = urllib.parse.parse_qs(body)
+
+        # Force a fresh deterministic-portal fetch for one app tab, overwriting
+        # its persisted output/portal/<app>.md -- everything else reads that
+        # file straight off disk (see the GET /api/portal/<app> handler above).
+        if path.startswith("/api/portal/") and path.endswith("/refresh"):
+            app = path[len("/api/portal/"):-len("/refresh")]
+            if app not in dict(views.APP_TABS):
+                self._send_response(HTTPStatus.NOT_FOUND, b"unknown app", "text/plain")
+                return
+            try:
+                from px0 import portal as portal_mod
+                text = portal_mod.refresh(app, self.home, self.config)
+                updated_at = portal_mod.portal_path(self.home, app).stat().st_mtime
+                html_out = views.render_portal_section(app, text, updated_at)
+                self._send_response(HTTPStatus.OK, html_out.encode(), "text/html")
+            except Exception as e:
+                self._send_response(HTTPStatus.INTERNAL_SERVER_ERROR, str(e).encode(), "text/plain")
+            return
 
         # Toggle enable/disable for a workflow
         if path.startswith("/api/workflows/") and path.endswith("/toggle"):
@@ -352,22 +384,25 @@ class WebUIHandler(SimpleHTTPRequestHandler):
                     self._send_response(HTTPStatus.OK, msg.encode(), "text/html")
                 return
             elif act == "start":
+                header_scope = query.get("scope", [""])[0] == "header"
                 try:
                     status = daemon_mod.status(self.home, self.config)
+                    spawn_failed = False
                     if not status.get("alive"):
-                        px0_bin = sys.executable
-                        args = [px0_bin, "-m", "px0.cli", "daemon", "serve"]
-                        env = {**os.environ, "PX0_HOME": str(self.home)}
-                        subprocess.Popen(
-                            args,
-                            env=env,
-                            stdin=subprocess.DEVNULL,
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL,
-                            start_new_session=True
-                        )
-                    import time; time.sleep(0.5)
-                    html_out = views.render_daemon_view(self.home, self.config)
+                        try:
+                            daemon_mod.spawn_serve(self.home)
+                        except OSError:
+                            spawn_failed = True
+                        import time; time.sleep(0.5)
+                        status = daemon_mod.status(self.home, self.config)
+
+                    if header_scope:
+                        # The header's compact start control: just the badge,
+                        # with the manual fallback command if it didn't come up.
+                        html_out = views.render_daemon_badge(
+                            status, start_failed=spawn_failed or not status.get("alive"))
+                    else:
+                        html_out = views.render_daemon_view(self.home, self.config)
                     self._send_response(HTTPStatus.OK, html_out.encode(), "text/html")
                 except Exception as e:
                     self._send_response(HTTPStatus.INTERNAL_SERVER_ERROR, str(e).encode(), "text/plain")
@@ -425,8 +460,8 @@ def start_server(home: Path, config: dict, host: str = "127.0.0.1", port: int = 
             raise e
 
     url = f"http://{host}:{port}/"
-    print(f"\n🚀 px0 web dashboard running at: {url}")
-    print("Press Ctrl+C to stop the server.\n")
+    ui.ok("web dashboard running", url)
+    ui.hint("Ctrl-C to stop the server")
 
     if open_browser:
         try:

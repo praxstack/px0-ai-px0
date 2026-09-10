@@ -23,6 +23,16 @@ class FakeComposio:
         self.last_execute_slug = None
         self.last_execute_args = None
         self.execute_response = {"success": True}
+        # Optional per-slug override, for a test whose tool makes more than
+        # one execute() call with different expected responses (e.g.
+        # linear_list_my_issues: get-current-user, then list-issues).
+        # execute_response is the default when a slug has no override.
+        self.execute_responses: dict = {}
+        # Models Composio's real "200 with successful: false" shape (a
+        # scope/permission failure, say) -- distinct from fail_status_code,
+        # which models an HTTP-level failure instead.
+        self.execute_successful = True
+        self.execute_error = None
         self.fail_status_code = None
 
     def handle_request(self, method, url, **kwargs):
@@ -81,7 +91,10 @@ class FakeComposio:
             self.last_execute_slug = url.split("/tools/execute/")[-1]
             payload = kwargs.get("json", {})
             self.last_execute_args = payload.get("arguments", {})
-            return MockResponse(200, {'successful': True, 'data': self.execute_response})
+            data = self.execute_responses.get(self.last_execute_slug, self.execute_response)
+            return MockResponse(200, {
+                'successful': self.execute_successful, 'data': data, 'error': self.execute_error,
+            })
 
         # 5. Fallback
         return MockResponse(404, {"error": "Not Found"})

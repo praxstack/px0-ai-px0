@@ -58,6 +58,8 @@ header {
   font-weight: 700;
   color: var(--accent);
   letter-spacing: -0.5px;
+  text-decoration: none;
+  cursor: pointer;
 }
 
 .brand span {
@@ -528,6 +530,106 @@ pre.code-view {
 
 .source-card:first-child {
   margin-top: 0;
+}
+
+/* Needs-action home page: one vertical tab per app on the left, that app's
+   approvals/inbox on the right. Both panels are rendered server-side up
+   front (no live per-app fetch), so switching tabs is pure client-side
+   show/hide -- see pxSelectAppTab in views.render_needs_action. */
+.app-tabs {
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+}
+
+.app-tab-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 0 0 180px;
+  position: sticky;
+  top: 20px;
+}
+
+.app-tab-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.app-tab-btn:hover {
+  color: var(--text);
+  background-color: var(--panel-hover);
+}
+
+.app-tab-btn.active {
+  color: var(--accent);
+  background-color: var(--accent-faint);
+  border-color: rgba(224, 122, 31, 0.3);
+}
+
+.app-tab-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  background-color: rgba(127, 132, 142, 0.15);
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  padding: 1px 7px;
+  line-height: 1.5;
+}
+
+.app-tab-btn.active .app-tab-count {
+  color: var(--accent);
+  border-color: rgba(224, 122, 31, 0.3);
+}
+
+.app-tab-content {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .app-tabs {
+    flex-direction: column;
+  }
+
+  .app-tab-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    position: static;
+    flex-basis: auto;
+    width: 100%;
+  }
+
+  .app-tab-btn {
+    width: auto;
+  }
+}
+
+/* Deterministic portal: the live, non-LLM per-app markdown (px0/portal.py,
+   persisted at output/portal/<app>.md) that fills the #portal-<app>
+   placeholder inside each app tab. Rendered as a .source-card + .markdown-body
+   -- the same look as a workflow-delivered inbox entry, since a workflow can
+   write this exact file itself. */
+.portal-widgets-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 0;
 }
 
 .source-card-header {

@@ -4,6 +4,7 @@ import threading
 import time
 import urllib.request
 import urllib.parse
+import urllib.error
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
@@ -303,3 +304,130 @@ def test_inbox_entry_detail_modal(web_test_env):
         assert "something worth reading" in html
     # Opening it marks it read, same as `px0 inbox read`
     assert inbox_mod.read_entry(home, entry["id"])["status"] == inbox_mod.READ
+
+
+def test_portal_route_returns_widgets(web_test_env, monkeypatch):
+    """The deterministic-portal route (px0/portal.py) never touches a real
+    network call in this test -- `tools.call` is monkeypatched, which also
+    covers `portal.tools_mod.call` since it's the same module object."""
+    base_url = web_test_env["base_url"]
+
+    def fake_call(home, config, tool_id, args):
+        if tool_id == "github.list_my_prs":
+            return [{"title": "My open PR", "url": "https://x/1", "state": "open",
+                     "updated_at": "2026-09-01T00:00:00Z"}]
+        return []
+
+    monkeypatch.setattr(tools, "call", fake_call)
+
+    with urllib.request.urlopen(f"{base_url}/api/portal/github") as resp:
+        assert resp.status == 200
+        html = resp.read().decode()
+        assert "Your open pull requests" in html
+        assert "My open PR" in html
+        assert "Needs your review" in html
+
+
+def test_portal_route_persists_and_does_not_refetch(web_test_env, monkeypatch):
+    """The whole point of the persistence layer: a first GET fetches live
+    and writes output/portal/<app>.md; a second GET must read that file
+    straight off disk, with no further tools.call."""
+    home = web_test_env["home"]
+    base_url = web_test_env["base_url"]
+    call_count = {"n": 0}
+
+    def fake_call(home_arg, config, tool_id, args):
+        call_count["n"] += 1
+        if tool_id == "linear.get_current_user":
+            return {"id": "u1"}
+        if tool_id == "linear.list_my_issues":
+            return [{"title": "Fix bug"}]
+        return []
+
+    monkeypatch.setattr(tools, "call", fake_call)
+
+    with urllib.request.urlopen(f"{base_url}/api/portal/linear") as resp:
+        assert resp.status == 200
+        first_html = resp.read().decode()
+    assert "Fix bug" in first_html
+    first_count = call_count["n"]
+    assert first_count > 0
+    assert (home / "output" / "portal" / "linear.md").exists()
+
+    with urllib.request.urlopen(f"{base_url}/api/portal/linear") as resp:
+        assert resp.status == 200
+        second_html = resp.read().decode()
+    assert call_count["n"] == first_count  # no new fetch
+    assert "Fix bug" in second_html
+
+
+def test_portal_refresh_route_forces_a_fresh_fetch(web_test_env, monkeypatch):
+    home = web_test_env["home"]
+    base_url = web_test_env["base_url"]
+    responses = iter([
+        [{"title": "First PR", "url": "https://x/1", "state": "open", "updated_at": "2026-09-01T00:00:00Z"}],
+        [{"title": "Second PR", "url": "https://x/2", "state": "open", "updated_at": "2026-09-02T00:00:00Z"}],
+    ])
+
+    def fake_call(home_arg, config, tool_id, args):
+        if tool_id == "github.list_my_prs":
+            return next(responses)
+        return []
+
+    monkeypatch.setattr(tools, "call", fake_call)
+
+    with urllib.request.urlopen(f"{base_url}/api/portal/github") as resp:
+        assert "First PR" in resp.read().decode()
+
+    req = urllib.request.Request(f"{base_url}/api/portal/github/refresh", method="POST", data=b"")
+    with urllib.request.urlopen(req) as resp:
+        assert resp.status == 200
+        html = resp.read().decode()
+    assert "Second PR" in html
+    assert "First PR" not in html
+    assert "Second PR" in (home / "output" / "portal" / "github.md").read_text()
+
+
+def test_portal_route_serves_a_workflow_written_file(web_test_env, monkeypatch):
+    """A workflow writing output/portal/<app>.md directly must be served
+    as-is, with no live tools.call at all."""
+    home = web_test_env["home"]
+    base_url = web_test_env["base_url"]
+
+    def fail_call(*a, **k):
+        raise AssertionError("tools.call must not be reached when the file already exists")
+
+    portal_dir = home / "output" / "portal"
+    portal_dir.mkdir(parents=True, exist_ok=True)
+    (portal_dir / "slack.md").write_text("## Written by a workflow\n\n- hand-curated note\n")
+
+    monkeypatch.setattr(tools, "call", fail_call)
+
+    with urllib.request.urlopen(f"{base_url}/api/portal/slack") as resp:
+        assert resp.status == 200
+        html = resp.read().decode()
+    assert "Written by a workflow" in html
+    assert "hand-curated note" in html
+
+
+def test_portal_route_unknown_app_404(web_test_env):
+    base_url = web_test_env["base_url"]
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(f"{base_url}/api/portal/notarealapp")
+    assert exc_info.value.code == 404
+
+
+def test_needs_action_fragment_has_portal_placeholder(web_test_env):
+    """The default-active app tab's live section fires eagerly on load; the
+    placeholder + the JS that lazy-loads other tabs must both be present in
+    the returned fragment, whether reached via `/` or the htmx partial."""
+    base_url = web_test_env["base_url"]
+    with urllib.request.urlopen(f"{base_url}/api/views/needs-action") as resp:
+        assert resp.status == 200
+        html = resp.read().decode()
+        assert 'id="portal-github"' in html
+        assert "pxLoadPortal" in html
+        assert "pxLoadPortal('github')" in html
+    # "Other" never gets a portal placeholder -- it's scoped to the three
+    # known apps px0 has real tooling for.
+    assert 'id="portal-other"' not in html

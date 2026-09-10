@@ -105,7 +105,7 @@ def collect(home: Path, config: dict, hours: int = RECENT_HOURS) -> dict:
     if scheduled and not daemon.get("alive"):
         problems.append({
             "detail": f"{len(scheduled)} workflow(s) are scheduled but the daemon is not running",
-            "fix": "px0 daemon start",
+            "fix": daemon_mod.START_COMMAND,
         })
     if failures:
         problems.append({

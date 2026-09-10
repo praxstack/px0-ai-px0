@@ -2179,11 +2179,7 @@ def cmd_daemon(args: argparse.Namespace) -> None:
 
     if args.daemon_cmd == "start":
         # detached child inherits current env plus an explicit PX0_HOME so it targets the same store
-        subprocess.Popen(
-            [sys.executable, "-m", "px0.cli", "daemon", "serve"],
-            env={**os.environ, "PX0_HOME": str(home)},
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+        daemon_mod.spawn_serve(home)
         ui.ok("daemon starting")
         return
 
@@ -2200,11 +2196,7 @@ def cmd_daemon(args: argparse.Namespace) -> None:
         s = daemon_mod.status(home, config)
         if s["pid"] and s["alive"]:
             os.kill(s["pid"], signal.SIGTERM)
-        subprocess.Popen(
-            [sys.executable, "-m", "px0.cli", "daemon", "serve"],
-            env={**os.environ, "PX0_HOME": str(home)},
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+        daemon_mod.spawn_serve(home)
         ui.ok("daemon restarted")
         return
 

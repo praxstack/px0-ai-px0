@@ -12,8 +12,36 @@ from px0 import (
     daemon as daemon_mod,
     inbox as inbox_mod,
     runs as runs_mod,
+    tools as tools_mod,
     workflow as workflow_mod,
 )
+
+# The needs-action home page's app tabs. Fixed and small on purpose -- these
+# are the apps px0 has real tooling for today; anything else (calendar,
+# gmail, custom tools, or a tool id that no longer resolves) falls into
+# "other" rather than getting silently dropped.
+APP_TABS: list[tuple[str, str]] = [
+    ("github", "GitHub"),
+    ("linear", "Linear"),
+    ("slack", "Slack"),
+]
+APP_LABELS: dict[str, str] = dict(APP_TABS) | {"other": "Other"}
+
+
+def _provider_of(home, tool_id: str) -> str:
+    """Best-effort app name for a tool id, for bucketing an approval into its
+    app tab. Never raises -- a stale approval referencing a since-removed
+    tool must still render somewhere (the "other" tab) rather than break the
+    page."""
+    try:
+        spec = tools_mod.resolve(tool_id, home)
+        if spec and spec.provider:
+            return spec.provider.lower()
+    except Exception:
+        pass
+    raw = tool_id[len("composio:"):] if tool_id.startswith("composio:") else tool_id
+    head = raw.split(".", 1)[0].split("_", 1)[0]
+    return (head or "px0").lower()
 
 
 def _escape(val: Any) -> str:
@@ -88,23 +116,12 @@ def render_markdown(text: str) -> str:
     return "\n".join(blocks) or "<p class=\"empty-state\">Nothing to show.</p>"
 
 
-def page_shell(content: str, active_tab: str = "dashboard", daemon_status: dict | None = None,
+def page_shell(content: str, active_tab: str = "needs-action", daemon_status: dict | None = None,
                home=None, config=None) -> str:
-    is_alive = daemon_status.get("alive", False) if daemon_status else False
-    badge_cls = "badge-success" if is_alive else "badge-dim"
-    dot_cls = "dot-green" if is_alive else "dot-red"
-    status_str = "RUNNING" if is_alive else "STOPPED"
-    daemon_badge = (
-        '<div id="header-daemon-badge" hx-get="/api/daemon/badge" hx-trigger="every 5s" hx-swap="outerHTML">'
-        f'<span class="badge {badge_cls}">'
-        f'<span class="dot {dot_cls}"></span>'
-        f'daemon: {status_str}'
-        '</span>'
-        '</div>'
-    )
+    daemon_badge = render_daemon_badge(daemon_status or {})
     needs_action_badge = render_needs_action_badge(home, config) if home and config else ""
 
-    t_dash = 'active' if active_tab == 'dashboard' else ''
+    t_stats = 'active' if active_tab == 'stats' else ''
     t_wf = 'active' if active_tab == 'workflows' else ''
     t_sched = 'active' if active_tab == 'schedules' else ''
     t_runs = 'active' if active_tab == 'runs' else ''
@@ -140,10 +157,10 @@ def page_shell(content: str, active_tab: str = "dashboard", daemon_status: dict 
 <body>
   <header>
     <div class="logo-area">
-      <div class="brand">px0<span>web</span></div>
+      <a href="/" class="brand" hx-get="/api/views/needs-action" hx-target="#main-view" hx-push-url="/">px0<span>web</span></a>
       <nav>
-        <a href="/" class="nav-btn {t_dash}" hx-get="/api/views/dashboard" hx-target="#main-view" hx-push-url="/">Dashboard</a>
-        <a href="/needs-action" class="nav-btn {t_na}" hx-get="/api/views/needs-action" hx-target="#main-view" hx-push-url="/needs-action">Needs Action</a>
+        <a href="/" class="nav-btn {t_na}" hx-get="/api/views/needs-action" hx-target="#main-view" hx-push-url="/">Needs Action</a>
+        <a href="/stats" class="nav-btn {t_stats}" hx-get="/api/views/dashboard" hx-target="#main-view" hx-push-url="/stats">Stats</a>
         <a href="/workflows" class="nav-btn {t_wf}" hx-get="/api/views/workflows" hx-target="#main-view" hx-push-url="/workflows">Workflows</a>
         <a href="/schedules" class="nav-btn {t_sched}" hx-get="/api/views/schedules" hx-target="#main-view" hx-push-url="/schedules">Schedules</a>
         <a href="/runs" class="nav-btn {t_runs}" hx-get="/api/views/runs" hx-target="#main-view" hx-push-url="/runs">Runs</a>
@@ -167,17 +184,42 @@ def page_shell(content: str, active_tab: str = "dashboard", daemon_status: dict 
 </html>"""
 
 
-def render_daemon_badge(daemon_status: dict) -> str:
+def render_daemon_badge(daemon_status: dict, start_failed: bool = False) -> str:
+    """The header's daemon status pill. When the daemon is down it doubles as
+    a start control: a button that asks the server to spawn it in the
+    background (`/api/daemon/action?act=start&scope=header`), and, if that
+    doesn't bring it up, the exact command (`daemon_mod.START_COMMAND`) to
+    run by hand -- the same single source used by `px0 status` and the
+    playlist-ingest hint, so it can't say something different from the CLI.
+    """
     is_alive = daemon_status.get("alive", False)
     badge_cls = "badge-success" if is_alive else "badge-dim"
     dot_cls = "dot-green" if is_alive else "dot-red"
     status_str = "RUNNING" if is_alive else "STOPPED"
+    start_btn = ""
+    fallback = ""
+    if not is_alive:
+        start_btn = (
+            '<button class="btn btn-primary btn-sm" style="margin-left:6px;" '
+            'hx-post="/api/daemon/action?act=start&scope=header" '
+            'hx-target="#header-daemon-badge" hx-swap="outerHTML">Start</button>'
+        )
+        if start_failed:
+            fallback = (
+                '<div style="margin-top:4px; font-size:11px; color: var(--text-dim);">'
+                f'Could not start it here — run <code class="code-font">{_escape(daemon_mod.START_COMMAND)}</code>'
+                '</div>'
+            )
     return (
         '<div id="header-daemon-badge" hx-get="/api/daemon/badge" hx-trigger="every 5s" hx-swap="outerHTML">'
+        '<div style="display:flex; align-items:center;">'
         f'<span class="badge {badge_cls}">'
         f'<span class="dot {dot_cls}"></span>'
         f'daemon: {status_str}'
         '</span>'
+        f'{start_btn}'
+        '</div>'
+        f'{fallback}'
         '</div>'
     )
 
@@ -194,8 +236,8 @@ def render_needs_action_badge(home, config) -> str:
     return (
         '<div id="header-needs-action-badge" hx-get="/api/needs-action/badge" '
         'hx-trigger="every 5s" hx-swap="outerHTML">'
-        f'<a href="/needs-action" hx-get="/api/views/needs-action" hx-target="#main-view" '
-        f'hx-push-url="/needs-action" style="text-decoration:none;">'
+        f'<a href="/" hx-get="/api/views/needs-action" hx-target="#main-view" '
+        f'hx-push-url="/" style="text-decoration:none;">'
         f'<span class="badge {badge_cls}">'
         f'<span class="dot {"dot-amber" if count else "dot-green"}"></span>'
         f'{label}'
@@ -277,8 +319,7 @@ def render_dashboard(home, config) -> str:
     """
 
 
-def _render_pending_approvals(home, config) -> str:
-    pending = approvals_mod.listing(home, config, status=approvals_mod.PENDING)
+def _render_pending_approvals(pending: list[dict]) -> str:
     if not pending:
         return ""
     cards = []
@@ -379,20 +420,125 @@ def _render_inbox_group(home, config, title: str, entries: list[dict]) -> str:
     """
 
 
+def render_portal_section(app: str, text: str | None, updated_at: float | None) -> str:
+    """The deterministic-portal card for one app tab: whatever is persisted
+    at `output/portal/<app>.md` (px0/portal.py), rendered through the exact
+    same `render_markdown` every workflow-produced body already goes
+    through -- so a workflow that writes this same file instead of px0's own
+    refresh() renders identically, no special-casing needed. Swapped into a
+    `#portal-<app>` placeholder by `pxLoadPortal` in render_needs_action's
+    script, below, and re-rendered in place by the Refresh button's POST."""
+    when = (datetime.fromtimestamp(updated_at).strftime("%Y-%m-%d %H:%M")
+            if updated_at else "never")
+    body = render_markdown(text) if text and text.strip() else '<p class="empty-state">No live data yet.</p>'
+    return f"""
+    <div class="source-card" id="portal-card-{_escape(app)}">
+      <div class="source-card-header">
+        <span class="badge badge-dim">live</span>
+        <span class="code-font" style="color: var(--text-dim);">updated {_escape(when)}</span>
+        <div style="flex:1;"></div>
+        <button class="btn btn-secondary btn-sm" hx-post="/api/portal/{_escape(app)}/refresh"
+                hx-target="#portal-{_escape(app)}" hx-swap="innerHTML">Refresh</button>
+      </div>
+      <div class="markdown-body">{body}</div>
+    </div>
+    """
+
+
 def render_needs_action(home, config) -> str:
-    """The workbench's single "what needs me today" view: pending write
-    approvals first, since those are actively waiting on a yes/no, then
-    unread needs_action inbox entries grouped by app, then unread fyi
-    entries at lower weight so nothing is hidden, only deprioritized."""
-    approvals_html = _render_pending_approvals(home, config)
+    """The workbench's single "what needs me today" view, organized as one
+    vertical tab per app. Each tab stacks two layers: pending write
+    approvals and unread inbox entries first (workflow-delivered, actively
+    waiting on a yes/no or a read), then a deterministic "live" section
+    fetched by direct API call with no LLM/workflow involved (see
+    px0/portal.py) -- what the app says right now, not what a scheduled
+    workflow already told you. An app only shows what a workflow has
+    actually delivered for it (an approval's tool, or an inbox entry's
+    `source`); a tool/source that isn't github/linear/slack falls into
+    "other" rather than being dropped -- "other" gets no live section, since
+    the portal is scoped to the three apps px0 has real tooling for."""
+    pending = approvals_mod.listing(home, config, status=approvals_mod.PENDING)
     needs_action = inbox_mod.listing(home, status=inbox_mod.UNREAD, attention=inbox_mod.NEEDS_ACTION)
     fyi = inbox_mod.listing(home, status=inbox_mod.UNREAD, attention=inbox_mod.FYI)
-    needs_action_html = _render_inbox_group(home, config, "Needs your attention", needs_action)
-    fyi_html = _render_inbox_group(home, config, "FYI", fyi)
 
-    if not (approvals_html or needs_action_html or fyi_html):
-        return '<div class="empty-state"><p>Nothing waiting on you right now.</p></div>'
-    return f"{approvals_html}\n{needs_action_html}\n{fyi_html}"
+    known_apps = [app for app, _label in APP_TABS]
+    buckets: dict[str, dict[str, list[dict]]] = {
+        app: {"approvals": [], "needs_action": [], "fyi": []} for app in known_apps + ["other"]
+    }
+    for a in pending:
+        app = _provider_of(home, a.get("tool", ""))
+        buckets[app if app in buckets else "other"]["approvals"].append(a)
+    for e in needs_action:
+        app = e.get("source") or "px0"
+        buckets[app if app in buckets else "other"]["needs_action"].append(e)
+    for e in fyi:
+        app = e.get("source") or "px0"
+        buckets[app if app in buckets else "other"]["fyi"].append(e)
+
+    order = list(known_apps)
+    if any(buckets["other"].values()):
+        order.append("other")
+    # Prefer whichever tab actually has something queued; otherwise just land
+    # on the first known app so its live portal data has somewhere to open.
+    default_app = next((app for app in order if any(buckets[app].values())), order[0])
+
+    nav_items, panels = [], []
+    for app in order:
+        b = buckets[app]
+        count = len(b["approvals"]) + len(b["needs_action"]) + len(b["fyi"])
+        label = _escape(APP_LABELS.get(app, app.title()))
+        active = app == default_app
+        count_html = f'<span class="app-tab-count">{count}</span>' if count else ""
+        nav_items.append(
+            f'<button type="button" class="app-tab-btn{" active" if active else ""}" '
+            f'data-app-tab="{app}" onclick="pxSelectAppTab(\'{app}\')">{label}{count_html}</button>'
+        )
+
+        queue_html = (
+            _render_pending_approvals(b["approvals"])
+            + _render_inbox_group(home, config, "Needs your attention", b["needs_action"])
+            + _render_inbox_group(home, config, "FYI", b["fyi"])
+        )
+        if not queue_html:
+            queue_html = f'<div class="empty-state"><p>Nothing waiting on you in {label} right now.</p></div>'
+
+        portal_html = ""
+        if app in known_apps:
+            portal_html = (
+                f'<div id="portal-{app}" class="portal-widgets-loading">'
+                f'<span class="spinner"></span> '
+                f'<span style="color: var(--text-dim);">Loading live {label} data…</span></div>'
+            )
+
+        panels.append(
+            f'<div class="app-tab-panel" data-app-panel="{app}"{"" if active else " hidden"}>'
+            f'{queue_html}{portal_html}</div>'
+        )
+
+    return f"""
+    <div class="app-tabs">
+      <nav class="app-tab-nav">{"".join(nav_items)}</nav>
+      <div class="app-tab-content">{"".join(panels)}</div>
+    </div>
+    <script>
+      function pxSelectAppTab(app) {{
+        document.querySelectorAll('.app-tab-btn').forEach(function(el) {{
+          el.classList.toggle('active', el.getAttribute('data-app-tab') === app);
+        }});
+        document.querySelectorAll('.app-tab-panel').forEach(function(el) {{
+          el.hidden = el.getAttribute('data-app-panel') !== app;
+        }});
+        pxLoadPortal(app);
+      }}
+      function pxLoadPortal(app) {{
+        var el = document.getElementById('portal-' + app);
+        if (!el || el.dataset.loaded === '1') return;
+        el.dataset.loaded = '1';
+        htmx.ajax('GET', '/api/portal/' + app, {{target: '#portal-' + app, swap: 'innerHTML'}});
+      }}
+      pxLoadPortal('{default_app}');
+    </script>
+    """
 
 
 def render_inbox_entry_detail_modal(home, config, entry_id: str) -> str:

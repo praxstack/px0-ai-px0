@@ -9,6 +9,7 @@ def _setup_active_composio(home):
         "calendar": "ca_testaccount",
         "gmail": "ca_testaccount",
         "slack": "ca_testaccount",
+        "linear": "ca_testaccount",
     }
     creds_mod.save(home, creds)
 
@@ -70,6 +71,108 @@ def test_slack_post_message_happy_path(tmp_home, fake_composio):
         "channel": "#dev",
         "text": "Hi"
     }
+
+
+def test_linear_create_issue_happy_path(tmp_home, fake_composio):
+    _setup_active_composio(tmp_home)
+    fake_composio.execute_response = {"id": "issue_1", "url": "https://linear.app/x/issue/ENG-1"}
+
+    res = tools.call(tmp_home, {}, "linear.create_issue",
+                      {"team_id": "team_1", "title": "Fix bug", "priority": 2})
+    assert res == {"id": "issue_1", "url": "https://linear.app/x/issue/ENG-1"}
+    assert fake_composio.last_execute_slug == "LINEAR_CREATE_LINEAR_ISSUE"
+    assert fake_composio.last_execute_args == {"team_id": "team_1", "title": "Fix bug", "priority": 2}
+
+
+def test_linear_update_issue_happy_path(tmp_home, fake_composio):
+    _setup_active_composio(tmp_home)
+    fake_composio.execute_response = {"id": "issue_1", "success": True}
+
+    res = tools.call(tmp_home, {}, "linear.update_issue", {"issue_id": "issue_1", "title": "Fix bug (updated)"})
+    assert res == {"id": "issue_1", "success": True}
+    assert fake_composio.last_execute_slug == "LINEAR_UPDATE_ISSUE"
+    assert fake_composio.last_execute_args == {"issue_id": "issue_1", "title": "Fix bug (updated)"}
+
+
+def test_linear_get_current_user_happy_path(tmp_home, fake_composio):
+    _setup_active_composio(tmp_home)
+    fake_composio.execute_response = {"id": "user_1", "name": "Arpit"}
+
+    res = tools.call(tmp_home, {}, "linear.get_current_user", {})
+    assert res == {"id": "user_1", "name": "Arpit"}
+    assert fake_composio.last_execute_slug == "LINEAR_GET_CURRENT_USER"
+    assert fake_composio.last_execute_args == {}
+
+
+def test_linear_list_my_issues_happy_path(tmp_home, fake_composio):
+    _setup_active_composio(tmp_home)
+    fake_composio.execute_response = {"issues": [{"title": "Fix bug"}]}
+
+    res = tools.call(tmp_home, {}, "linear.list_my_issues", {"assignee_id": "user_1"})
+    assert res == {"issues": [{"title": "Fix bug"}]}
+    assert fake_composio.last_execute_slug == "LINEAR_LIST_LINEAR_ISSUES"
+    assert fake_composio.last_execute_args == {"assignee_id": "user_1"}
+
+
+def test_linear_list_my_issues_omits_unset_project(tmp_home, fake_composio):
+    """project_id must not appear as an empty string when the caller didn't pass one."""
+    _setup_active_composio(tmp_home)
+    tools.call(tmp_home, {}, "linear.list_my_issues", {"assignee_id": "user_1"})
+    assert "project_id" not in fake_composio.last_execute_args
+
+
+def test_slack_list_conversations_happy_path(tmp_home, fake_composio):
+    _setup_active_composio(tmp_home)
+    fake_composio.execute_response = {"channels": [{"id": "C1", "name": "eng"}]}
+
+    res = tools.call(tmp_home, {}, "slack.list_conversations",
+                      {"exclude_archived": True, "types": "public_channel", "limit": 50})
+    assert res == {"channels": [{"id": "C1", "name": "eng"}]}
+    assert fake_composio.last_execute_slug == "SLACK_LIST_CONVERSATIONS"
+    assert fake_composio.last_execute_args == {
+        "exclude_archived": True, "types": "public_channel", "limit": 50
+    }
+
+
+def test_slack_fetch_conversation_history_happy_path(tmp_home, fake_composio):
+    _setup_active_composio(tmp_home)
+    fake_composio.execute_response = {"messages": [{"text": "hi", "ts": "1.0"}]}
+
+    res = tools.call(tmp_home, {}, "slack.fetch_conversation_history",
+                      {"channel": "C1", "oldest": "0", "limit": 20})
+    assert res == {"messages": [{"text": "hi", "ts": "1.0"}]}
+    assert fake_composio.last_execute_slug == "SLACK_FETCH_CONVERSATION_HISTORY"
+    assert fake_composio.last_execute_args == {"channel": "C1", "oldest": "0", "limit": 20}
+
+
+def test_slack_search_messages_happy_path(tmp_home, fake_composio):
+    _setup_active_composio(tmp_home)
+    fake_composio.execute_response = {"messages": {"matches": [{"text": "hey <@U1>"}]}}
+
+    res = tools.call(tmp_home, {}, "slack.search_messages", {"query": "<@U1>", "count": 20})
+    assert res == {"messages": {"matches": [{"text": "hey <@U1>"}]}}
+    assert fake_composio.last_execute_slug == "SLACK_SEARCH_MESSAGES"
+    assert fake_composio.last_execute_args == {"query": "<@U1>", "count": 20}
+
+
+def test_slack_whoami_happy_path(tmp_home, fake_composio):
+    _setup_active_composio(tmp_home)
+    fake_composio.execute_response = {"user": {"id": "U1"}, "ok": True}
+
+    res = tools.call(tmp_home, {}, "slack.whoami", {})
+    assert res == {"user": {"id": "U1"}, "ok": True}
+    assert fake_composio.last_execute_slug == "SLACK_RETRIEVE_A_USER_S_IDENTITY_DETAILS"
+
+
+def test_slack_whoami_missing_scope_raises_connector_error(tmp_home, fake_composio):
+    """Models the real, observed failure: a 200 response with successful:false,
+    distinct from an HTTP-level failure (fail_status_code)."""
+    _setup_active_composio(tmp_home)
+    fake_composio.execute_successful = False
+    fake_composio.execute_error = "Slack API error: missing_scope. Required scope: identity.basic"
+
+    with pytest.raises(tools.ConnectorError, match="missing_scope"):
+        tools.call(tmp_home, {}, "slack.whoami", {})
 
 
 def test_unconfigured_raises_connector_not_configured(tmp_home, fake_composio):
@@ -218,7 +321,15 @@ def test_tool_slugs_and_args_match_composio_schemas():
     Every slug here was confirmed to return 200 from GET /api/v3/tools/{slug},
     and every argument key below appears in that tool's own input_parameters
     schema. GMAIL_GET_EMAIL and a slack `message` key both looked plausible and
-    were both wrong -- the catalogue is the only authority.
+    were both wrong -- the catalogue is the only authority. linear.* confirmed
+    the same way on 2026-09-10 (LINEAR_CREATE_LINEAR_ISSUE requires team_id and
+    title; LINEAR_UPDATE_ISSUE requires issue_id and at least one other field).
+    The deterministic-portal reads (linear.get_current_user/list_my_issues,
+    slack.list_conversations/fetch_conversation_history/search_messages/whoami)
+    were confirmed the same way, also 2026-09-10 -- SLACK_RETRIEVE_A_USER_S_-
+    IDENTITY_DETAILS's schema resolves fine but execution fails with
+    missing_scope (identity.basic) on px0's default Composio-managed Slack
+    auth; see px0/portal.py's mentions widget for how that's handled.
     """
     assert tools._TOOL_SLUGS == {
         "calendar.list_events": "GOOGLECALENDAR_EVENTS_LIST",
@@ -226,11 +337,19 @@ def test_tool_slugs_and_args_match_composio_schemas():
         "gmail.get_message": "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID",
         "gmail.send_message": "GMAIL_SEND_EMAIL",
         "slack.post_message": "SLACK_SEND_MESSAGE",
+        "linear.create_issue": "LINEAR_CREATE_LINEAR_ISSUE",
+        "linear.update_issue": "LINEAR_UPDATE_ISSUE",
+        "linear.get_current_user": "LINEAR_GET_CURRENT_USER",
+        "linear.list_my_issues": "LINEAR_LIST_LINEAR_ISSUES",
+        "slack.list_conversations": "SLACK_LIST_CONVERSATIONS",
+        "slack.fetch_conversation_history": "SLACK_FETCH_CONVERSATION_HISTORY",
+        "slack.search_messages": "SLACK_SEARCH_MESSAGES",
+        "slack.whoami": "SLACK_RETRIEVE_A_USER_S_IDENTITY_DETAILS",
     }
     # Every registry tool backed by Composio has a slug.
     composio_tools = {
         tid for tid, spec in tools.REGISTRY.items()
-        if spec.provider in ("calendar", "gmail", "slack")
+        if spec.provider in ("calendar", "gmail", "slack", "linear")
     }
     assert composio_tools == set(tools._TOOL_SLUGS)
 

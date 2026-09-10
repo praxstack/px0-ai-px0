@@ -21,7 +21,16 @@ class ConnectorError(Exception):
 
 
 class ConnectorNotConfigured(ConnectorError):
-    """The connection this tool needs is not set up."""
+    """The connection this tool needs is not set up.
+
+    `redirect_url` carries the live auth link when one was minted (see
+    `_needs_connection`), so a caller that wants a real "Connect" button
+    doesn't have to regex-scrape it back out of the message text.
+    """
+
+    def __init__(self, message: str, redirect_url: str | None = None):
+        super().__init__(message)
+        self.redirect_url = redirect_url
 
 
 @dataclass
@@ -43,6 +52,7 @@ class Context:
 
 
 _PR_URL_RE = re.compile(r"github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/pull/(?P<number>\d+)")
+_ISSUE_URL_RE = re.compile(r"github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/(?:pull|issues)/(?P<number>\d+)")
 
 
 def _github_request(ctx: Context, method: str, path: str, **kwargs) -> Any:
@@ -121,6 +131,15 @@ def _parse_pr_url(url: str) -> tuple[str, str, str]:
     return m.group("owner"), m.group("repo"), m.group("number")
 
 
+def _parse_issue_url(url: str) -> tuple[str, str, str]:
+    """Extracts (owner, repo, number) from a github.com PR *or* issue URL; raises
+    ConnectorError if it doesn't match either shape."""
+    m = _ISSUE_URL_RE.search(url)
+    if not m:
+        raise ConnectorError(f"not a github issue or pull request url: {url}")
+    return m.group("owner"), m.group("repo"), m.group("number")
+
+
 def _since_to_date(since: str) -> str:
     """Converts a relative window like "-7d" into an ISO date; passes through anything else unchanged."""
     if since.startswith("-") and since.endswith("d"):
@@ -177,6 +196,80 @@ def github_list_review_comments(args: dict, ctx: Context) -> list[dict]:
     ]
 
 
+def github_list_review_requests(args: dict, ctx: Context) -> list[dict]:
+    """Lists open PRs where the connected user's review has been requested.
+    Read-only. Resolves /user and uses the literal login rather than GitHub's
+    `@me` search token, same reasoning as `github_list_my_prs` above."""
+    me = _github_request(ctx, "GET", "/user").json()["login"]
+    query = f"is:pr review-requested:{me} state:open"
+    resp = _github_request(ctx, "GET", "/search/issues",
+                            params={"q": query, "sort": "updated", "order": "desc", "per_page": 30})
+    items = resp.json().get("items", [])
+    return [
+        {"title": i["title"], "url": i["html_url"], "state": i["state"],
+         "updated_at": i["updated_at"]}
+        for i in items
+    ]
+
+
+_PUSH_COMMIT_ENRICH_LIMIT = 15
+
+
+def _push_commits(ctx: Context, repo: str, payload: dict) -> list[dict]:
+    """GitHub's /users/{u}/events feed carries a PushEvent's before/head SHAs
+    but not the commits themselves (unlike /repos/{o}/{r}/events, or what the
+    docs describe) -- confirmed against a live response 2026-09-10. One
+    compare call recovers the actual messages; failures (force-push losing
+    `before`, a brand-new branch's all-zero SHA, ...) degrade to no commits
+    for that one push rather than failing the whole activity fetch."""
+    before, head = payload.get("before"), payload.get("head")
+    if not repo or not before or not head:
+        return []
+    try:
+        resp = _github_request(ctx, "GET", f"/repos/{repo}/compare/{before}...{head}")
+        return [{"sha": c["sha"], "message": c["commit"]["message"]} for c in resp.json().get("commits", [])]
+    except ConnectorError:
+        return []
+
+
+def github_list_recent_activity(args: dict, ctx: Context) -> list[dict]:
+    """The connected user's own GitHub event feed (pushes, PR/issue activity,
+    reviews, stars, forks...) since args["since"] (default -7d), via GitHub's
+    Events API -- there is no separate "just my commits" endpoint short of
+    the heavier /search/commits, so a caller wanting recent commits filters
+    this feed's PushEvent entries itself. Each of the first
+    `_PUSH_COMMIT_ENRICH_LIMIT` push events gets its actual commit messages
+    filled in via one extra call each (see `_push_commits`); older ones in
+    the window are returned with an empty commit list rather than paying for
+    unbounded extra requests. Read-only. The endpoint takes no date
+    parameter, so the window is applied client-side."""
+    me = _github_request(ctx, "GET", "/user").json()["login"]
+    resp = _github_request(ctx, "GET", f"/users/{me}/events", params={"per_page": 100})
+    since = args.get("since", "-7d")
+    days = int(since[1:-1]) if since.startswith("-") and since.endswith("d") else 7
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    out = []
+    push_enriched = 0
+    for e in resp.json():
+        try:
+            created = datetime.fromisoformat(e["created_at"].replace("Z", "+00:00"))
+        except (KeyError, ValueError):
+            continue
+        if created < cutoff:
+            continue
+        repo = (e.get("repo") or {}).get("name", "")
+        payload = e.get("payload") or {}
+        if e.get("type") == "PushEvent" and not payload.get("commits") and push_enriched < _PUSH_COMMIT_ENRICH_LIMIT:
+            payload = {**payload, "commits": _push_commits(ctx, repo, payload)}
+            push_enriched += 1
+        out.append({
+            "type": e.get("type", ""), "repo": repo,
+            "created_at": e["created_at"], "actor": (e.get("actor") or {}).get("login", ""),
+            "payload": payload,
+        })
+    return out
+
+
 def github_create_review_comment(args: dict, ctx: Context) -> dict:
     """Posts a single-line review comment on a pull request. Write tool: mutates the PR
     on GitHub. Resolves the PR's head sha itself so the caller only needs the URL."""
@@ -193,9 +286,25 @@ def github_create_review_comment(args: dict, ctx: Context) -> dict:
     return {"id": resp.json()["id"], "url": resp.json()["html_url"]}
 
 
+def github_create_issue_comment(args: dict, ctx: Context) -> dict:
+    """Posts a top-level comment on a GitHub issue or pull request. Write tool:
+    mutates the issue/PR on GitHub. The issue-comments endpoint is shared by
+    both -- a pull request is an issue as far as this API is concerned, unlike
+    `github_create_review_comment`'s diff-anchored endpoint above."""
+    owner, repo, number = _parse_issue_url(args["url"])
+    resp = _github_request(ctx, "POST", f"/repos/{owner}/{repo}/issues/{number}/comments",
+                            json={"body": args["body"]})
+    data = resp.json()
+    return {"id": data["id"], "url": data["html_url"]}
+
+
 # Composio tool slugs, each resolved against the live catalogue
 # (GET /api/v3/tools/{slug} returning 200) rather than inferred from the tool
-# name -- Composio's naming is not predictable from pattern. Verified 2026-08-20.
+# name -- Composio's naming is not predictable from pattern. Verified 2026-08-20;
+# linear.create_issue/update_issue and every linear.*/slack.* entry below
+# verified 2026-09-10 (SLACK_RETRIEVE_A_USER_S_IDENTITY_DETAILS returns 200 for
+# the schema but fails at execution time with missing_scope: identity.basic on
+# px0's Composio-managed default Slack auth -- callers must handle that).
 # Argument keys below come from each tool's own `input_parameters` schema.
 _TOOL_SLUGS: dict[str, str] = {
     "calendar.list_events": "GOOGLECALENDAR_EVENTS_LIST",
@@ -204,6 +313,14 @@ _TOOL_SLUGS: dict[str, str] = {
     "gmail.get_message": "GMAIL_FETCH_MESSAGE_BY_MESSAGE_ID",
     "gmail.send_message": "GMAIL_SEND_EMAIL",
     "slack.post_message": "SLACK_SEND_MESSAGE",
+    "linear.create_issue": "LINEAR_CREATE_LINEAR_ISSUE",
+    "linear.update_issue": "LINEAR_UPDATE_ISSUE",
+    "linear.get_current_user": "LINEAR_GET_CURRENT_USER",
+    "linear.list_my_issues": "LINEAR_LIST_LINEAR_ISSUES",
+    "slack.list_conversations": "SLACK_LIST_CONVERSATIONS",
+    "slack.fetch_conversation_history": "SLACK_FETCH_CONVERSATION_HISTORY",
+    "slack.search_messages": "SLACK_SEARCH_MESSAGES",
+    "slack.whoami": "SLACK_RETRIEVE_A_USER_S_IDENTITY_DETAILS",
 }
 
 
@@ -226,7 +343,8 @@ def _needs_connection(home, app: str, reason: str) -> ConnectorNotConfigured:
             f"{app} {reason}, and preparing its authorization failed: {e}"
         )
     return ConnectorNotConfigured(
-        f"{app} {reason}. Authorize it by opening:\n  {res['redirect_url']}"
+        f"{app} {reason}. Authorize it by opening:\n  {res['redirect_url']}",
+        redirect_url=res["redirect_url"],
     )
 
 
@@ -371,6 +489,80 @@ def slack_post_message(args: dict, ctx: Context) -> Any:
     return _composio_execute(ctx, "slack", _TOOL_SLUGS["slack.post_message"], arguments)
 
 
+def linear_create_issue(args: dict, ctx: Context) -> Any:
+    """Create a Linear issue in the given team."""
+    arguments = {
+        "team_id": args.get("team_id", ""),
+        "title": args.get("title", ""),
+    }
+    for key in ("description", "assignee_id", "state_id", "priority", "project_id", "due_date"):
+        if args.get(key) is not None:
+            arguments[key] = args[key]
+    return _composio_execute(ctx, "linear", _TOOL_SLUGS["linear.create_issue"], arguments)
+
+
+def linear_update_issue(args: dict, ctx: Context) -> Any:
+    """Update an existing Linear issue by id. Linear requires at least one
+    attribute besides issue_id, so only what the caller actually supplied is
+    sent -- an unset field must not become an unintended clear."""
+    arguments = {"issue_id": args.get("issue_id", "")}
+    for key in ("title", "description", "state_id", "assignee_id", "priority", "due_date"):
+        if args.get(key) is not None:
+            arguments[key] = args[key]
+    return _composio_execute(ctx, "linear", _TOOL_SLUGS["linear.update_issue"], arguments)
+
+
+def linear_get_current_user(args: dict, ctx: Context) -> Any:
+    """The connected Linear account's own id/name/email -- how a caller finds
+    "me" for filtering issues by assignee. Read-only."""
+    return _composio_execute(ctx, "linear", _TOOL_SLUGS["linear.get_current_user"], {})
+
+
+def linear_list_my_issues(args: dict, ctx: Context) -> Any:
+    """Lists non-archived Linear issues, optionally scoped to args["assignee_id"]
+    and/or args["project_id"]. Read-only."""
+    arguments = {}
+    if args.get("assignee_id"):
+        arguments["assignee_id"] = args["assignee_id"]
+    if args.get("project_id"):
+        arguments["project_id"] = args["project_id"]
+    return _composio_execute(ctx, "linear", _TOOL_SLUGS["linear.list_my_issues"], arguments)
+
+
+def slack_list_conversations(args: dict, ctx: Context) -> Any:
+    """Lists Slack conversations (channels/DMs) accessible to the connected
+    account. Read-only."""
+    arguments = {k: args[k] for k in ("cursor", "exclude_archived", "limit", "types", "user")
+                 if args.get(k) is not None}
+    return _composio_execute(ctx, "slack", _TOOL_SLUGS["slack.list_conversations"], arguments)
+
+
+def slack_fetch_conversation_history(args: dict, ctx: Context) -> Any:
+    """Fetches a chronological slice of messages from one Slack conversation.
+    Read-only."""
+    arguments = {"channel": args.get("channel", "")}
+    arguments.update({k: args[k] for k in ("cursor", "inclusive", "latest", "limit", "oldest")
+                       if args.get(k) is not None})
+    return _composio_execute(ctx, "slack", _TOOL_SLUGS["slack.fetch_conversation_history"], arguments)
+
+
+def slack_search_messages(args: dict, ctx: Context) -> Any:
+    """Workspace-wide Slack message search; args["query"] takes Slack's own
+    search modifiers (in:#channel, from:@user, before/after:yyyy-mm-dd, or a
+    raw `<@USER_ID>` mention string). Read-only."""
+    arguments = {"query": args.get("query", "")}
+    arguments.update({k: args[k] for k in ("count", "sort", "sort_dir") if args.get(k) is not None})
+    return _composio_execute(ctx, "slack", _TOOL_SLUGS["slack.search_messages"], arguments)
+
+
+def slack_whoami(args: dict, ctx: Context) -> Any:
+    """The connected Slack account's own identity. Read-only. Note: fails with
+    missing_scope (identity.basic) on px0's default Composio-managed Slack
+    auth as of 2026-09-10 -- callers should treat that as a soft failure, not
+    a hard error, since other Slack tools keep working without it."""
+    return _composio_execute(ctx, "slack", _TOOL_SLUGS["slack.whoami"], {})
+
+
 REGISTRY: dict[str, ToolSpec] = {
     "github.list_my_prs": ToolSpec(
         "github.list_my_prs", "github", "PRs authored by the connected user",
@@ -384,10 +576,19 @@ REGISTRY: dict[str, ToolSpec] = {
     "github.list_review_comments": ToolSpec(
         "github.list_review_comments", "github", "List existing review comments on a PR",
         {"url": "str"}, False, github_list_review_comments),
+    "github.list_review_requests": ToolSpec(
+        "github.list_review_requests", "github", "Open PRs where your review has been requested",
+        {}, False, github_list_review_requests),
+    "github.list_recent_activity": ToolSpec(
+        "github.list_recent_activity", "github", "Your recent GitHub event feed (pushes, PRs, issues, reviews...)",
+        {"since": "str"}, False, github_list_recent_activity),
     "github.create_review_comment": ToolSpec(
         "github.create_review_comment", "github", "Post a review comment on a PR",
         {"url": "str", "body": "str", "path": "str", "line": "int"}, True,
         github_create_review_comment),
+    "github.create_issue_comment": ToolSpec(
+        "github.create_issue_comment", "github", "Post a comment on a GitHub issue or pull request",
+        {"url": "str", "body": "str"}, True, github_create_issue_comment),
     "calendar.list_events": ToolSpec(
         "calendar.list_events", "calendar", "List calendar events in a window",
         {"window": "str"}, False, calendar_list_events),
@@ -403,6 +604,31 @@ REGISTRY: dict[str, ToolSpec] = {
     "slack.post_message": ToolSpec(
         "slack.post_message", "slack", "Post a message to a slack channel",
         {"channel": "str", "text": "str"}, True, slack_post_message),
+    "slack.list_conversations": ToolSpec(
+        "slack.list_conversations", "slack", "List slack channels and DMs accessible to the account",
+        {"types": "str", "limit": "int", "exclude_archived": "bool"}, False, slack_list_conversations),
+    "slack.fetch_conversation_history": ToolSpec(
+        "slack.fetch_conversation_history", "slack", "Fetch recent messages from one slack conversation",
+        {"channel": "str", "oldest": "str", "limit": "int"}, False, slack_fetch_conversation_history),
+    "slack.search_messages": ToolSpec(
+        "slack.search_messages", "slack", "Workspace-wide slack message search",
+        {"query": "str"}, False, slack_search_messages),
+    "slack.whoami": ToolSpec(
+        "slack.whoami", "slack", "The connected slack account's own identity",
+        {}, False, slack_whoami),
+    "linear.create_issue": ToolSpec(
+        "linear.create_issue", "linear", "Create a Linear issue",
+        {"team_id": "str", "title": "str", "description": "str"}, True, linear_create_issue),
+    "linear.update_issue": ToolSpec(
+        "linear.update_issue", "linear", "Update an existing Linear issue",
+        {"issue_id": "str", "title": "str", "description": "str", "state_id": "str"}, True,
+        linear_update_issue),
+    "linear.get_current_user": ToolSpec(
+        "linear.get_current_user", "linear", "The connected Linear account's own identity",
+        {}, False, linear_get_current_user),
+    "linear.list_my_issues": ToolSpec(
+        "linear.list_my_issues", "linear", "List Linear issues, optionally by assignee/project",
+        {"assignee_id": "str", "project_id": "str"}, False, linear_list_my_issues),
 }
 
 
