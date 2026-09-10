@@ -201,14 +201,14 @@ def _check_connections(home: Path) -> dict:
     conns = connect_mod.list_connections(home)
     issues = []
     for c in conns:
-        if c.get("service") in ("gmail", "slack", "calendar"):
+        if c.get("service") in ("gmail", "slack", "calendar", "github", "linear"):
             status = c.get("status")
             if status != "ACTIVE":
                 issues.append(f"{c['service']} connected_account is {status}, not ACTIVE -- finish the browser consent")
 
     if issues:
         stale = sorted({c["service"] for c in conns
-                        if c.get("service") in ("gmail", "slack", "calendar")
+                        if c.get("service") in ("gmail", "slack", "calendar", "github", "linear")
                         and c.get("status") != "ACTIVE"})
         return {
             "ok": False,

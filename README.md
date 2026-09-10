@@ -81,9 +81,19 @@ px0 init --harness gemini      # or pi, or opencode
 px0 config model               # switch backend or pick a model, later
 ```
 
-### 2. Build your first workflow
+### 2. See your day one
 
-px0 ships no workflows. Describe what you want:
+`px0 init` ships three read-only starter workflows - pull requests waiting on your review (GitHub), issues assigned to you (Linear), and recent channel activity (Slack) - and, right there, offers to connect each app and run its starter the moment you do. Skip any of them and its workflow is written but left off, ready for `px0 tools connect <app>` and `px0 workflows enable <id>` later.
+
+None of the three ever post, file, or send anything - they only look and tell you what they found. Open the dashboard to see it:
+
+```shell
+px0 ui
+```
+
+### 3. Build your own workflow
+
+Past those three, px0 ships nothing until you describe it. Say what you want:
 
 ```shell
 px0 workflows new
@@ -93,7 +103,7 @@ That opens an interview - one question at a time, until px0 has the job, what it
 
 px0 then asks about anything still genuinely ambiguous, finds the tools the job needs, and shows you the list before authorizing anything. Tools that can post or send get called out, so you can drop the ones you did not ask for. Then it writes the workflow file and prints its id, which you can override when it asks.
 
-### 3. Run it
+### 4. Run it
 
 ```shell
 px0 workflows run friday-pr-digest
@@ -101,7 +111,7 @@ px0 workflows run friday-pr-digest
 
 The first time a workflow needs Slack or Gmail, px0 hands you a URL to approve. You only authorize the apps you actually use.
 
-### 4. Put it on a schedule, or on a watch
+### 5. Put it on a schedule, or on a watch
 
 Your workflow already carries the schedule you described. Install the scheduler so it fires on its own:
 
@@ -121,7 +131,7 @@ trigger:
     every: 30m
 ```
 
-### 5. See what happened
+### 6. See what happened
 
 ```shell
 px0 status              # is anything broken
@@ -129,6 +139,7 @@ px0 workflows list      # what you can run
 px0 runs                # browse past runs
 px0 runs why <run-id>   # how a run reached its result
 px0 runs events <run-id># every turn, tool call, and what it cost
+px0 ui                  # everything at a glance, grouped by app
 ```
 
 A scheduled workflow that fails is silent unless you ask it not to be. Pick how

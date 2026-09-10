@@ -2,6 +2,7 @@
 
 import html
 import json
+import re
 from datetime import datetime
 from typing import Any
 from croniter import croniter
@@ -17,6 +18,74 @@ from px0 import (
 
 def _escape(val: Any) -> str:
     return html.escape(str(val if val is not None else ""))
+
+
+_MD_LINK_RE = re.compile(r'\[([^\]]+)\]\((https?://[^\s()]+)\)')
+_MD_BOLD_RE = re.compile(r'\*\*([^*\n]+)\*\*')
+_MD_CODE_RE = re.compile(r'`([^`\n]+)`')
+_MD_HEADING_RE = re.compile(r'^(#{1,3})\s+(.*)$')
+_MD_BULLET_RE = re.compile(r'^[-*]\s+(.*)$')
+
+
+def render_markdown(text: str) -> str:
+    """Renders a small, safe subset of markdown -- headings, bold, inline
+    code, http(s) links, bullet lists, paragraphs -- into HTML.
+
+    A workflow's output is the model's own text wrapped around whatever a
+    connector handed back: a PR title, a Slack message, an issue summary.
+    None of that is trusted. This escapes the *entire* source first and only
+    ever inserts tags this function itself writes, so a hostile title like
+    `<img src=x onerror=...>` lands on the page as inert text, never as a
+    live tag -- the same guarantee `_escape()` gives a `<pre>` block, just
+    with structure on top instead of none. Links are restricted to http(s)
+    so a `javascript:` URL from fetched content can't become clickable.
+    """
+    escaped = _escape(text)
+
+    def inline(s: str) -> str:
+        s = _MD_LINK_RE.sub(r'<a href="\2" target="_blank" rel="noopener noreferrer">\1</a>', s)
+        s = _MD_BOLD_RE.sub(r'<strong>\1</strong>', s)
+        s = _MD_CODE_RE.sub(r'<code>\1</code>', s)
+        return s
+
+    blocks: list[str] = []
+    para: list[str] = []
+    items: list[str] = []
+
+    def flush_para():
+        if para:
+            blocks.append(f"<p>{' '.join(para)}</p>")
+            para.clear()
+
+    def flush_list():
+        if items:
+            blocks.append("<ul>" + "".join(f"<li>{i}</li>" for i in items) + "</ul>")
+            items.clear()
+
+    for raw_line in escaped.split("\n"):
+        stripped = raw_line.strip()
+        if not stripped:
+            flush_para()
+            flush_list()
+            continue
+        heading = _MD_HEADING_RE.match(stripped)
+        if heading:
+            flush_para()
+            flush_list()
+            level = len(heading.group(1))
+            blocks.append(f"<h{level}>{inline(heading.group(2))}</h{level}>")
+            continue
+        bullet = _MD_BULLET_RE.match(stripped)
+        if bullet:
+            flush_para()
+            items.append(inline(bullet.group(1)))
+            continue
+        flush_list()
+        para.append(inline(stripped))
+
+    flush_para()
+    flush_list()
+    return "\n".join(blocks) or "<p class=\"empty-state\">Nothing to show.</p>"
 
 
 def page_shell(content: str, active_tab: str = "dashboard", daemon_status: dict | None = None,
@@ -243,7 +312,12 @@ def _render_pending_approvals(home, config) -> str:
     """
 
 
-def _render_inbox_group(title: str, entries: list[dict]) -> str:
+def _render_inbox_group(home, config, title: str, entries: list[dict]) -> str:
+    """One panel per attention level, one glance card per source app inside
+    it. The card shows the *latest* entry's full rendered body inline --
+    that is the "see everything at a glance" surface: no click needed to
+    read what a starter workflow found. Older entries for the same source
+    stay one click away, in a compact table under the card."""
     if not entries:
         return ""
     by_source: dict[str, list[dict]] = {}
@@ -252,29 +326,49 @@ def _render_inbox_group(title: str, entries: list[dict]) -> str:
 
     sections = []
     for source in sorted(by_source):
-        rows = []
-        for e in by_source[source]:
-            eid = _escape(e["id"])
-            created = _escape(e.get("created", "")[:19].replace("T", " "))
-            rows.append(f"""
-            <tr id="inbox-row-{eid}">
-              <td>{_escape(e.get('title', ''))}</td>
-              <td class="code-font" style="color: var(--text-dim);">{created}</td>
-              <td>
-                <div style="display:flex; gap:6px;">
-                  <button class="btn btn-secondary btn-sm" hx-get="/api/inbox/{eid}" hx-target="#modal-container">Open</button>
-                  <button class="btn btn-secondary btn-sm" hx-post="/api/inbox/{eid}/mark" hx-vals='{{"status": "archived"}}' hx-target="#inbox-row-{eid}" hx-swap="outerHTML">Archive</button>
-                </div>
-              </td>
-            </tr>
-            """)
-        sections.append(f"""
-        <div class="panel-title" style="font-size:13px; margin-top:14px;">{_escape(source)} ({len(by_source[source])})</div>
-        <div class="table-wrapper">
-          <table><thead><tr><th>Title</th><th>Delivered</th><th>Actions</th></tr></thead>
-          <tbody>{"".join(rows)}</tbody></table>
+        group = sorted(by_source[source], key=lambda e: e.get("created", ""), reverse=True)
+        latest, rest = group[0], group[1:]
+
+        latest_id = _escape(latest["id"])
+        latest_created = _escape(latest.get("created", "")[:19].replace("T", " "))
+        latest_body = inbox_mod.body(home, config, latest)
+        card = f"""
+        <div class="source-card" id="inbox-row-{latest_id}">
+          <div class="source-card-header">
+            <span class="badge badge-dim">{_escape(source)}</span>
+            <span class="code-font" style="color: var(--text-dim);">{latest_created}</span>
+            <div style="flex:1;"></div>
+            <button class="btn btn-secondary btn-sm" hx-post="/api/inbox/{latest_id}/mark" hx-vals='{{"status": "archived"}}' hx-target="#inbox-row-{latest_id}" hx-swap="outerHTML">Archive</button>
+          </div>
+          <div class="markdown-body">{render_markdown(latest_body)}</div>
         </div>
-        """)
+        """
+
+        rest_html = ""
+        if rest:
+            rows = []
+            for e in rest:
+                eid = _escape(e["id"])
+                created = _escape(e.get("created", "")[:19].replace("T", " "))
+                rows.append(f"""
+                <tr id="inbox-row-{eid}">
+                  <td>{_escape(e.get('title', ''))}</td>
+                  <td class="code-font" style="color: var(--text-dim);">{created}</td>
+                  <td>
+                    <div style="display:flex; gap:6px;">
+                      <button class="btn btn-secondary btn-sm" hx-get="/api/inbox/{eid}" hx-target="#modal-container">Open</button>
+                      <button class="btn btn-secondary btn-sm" hx-post="/api/inbox/{eid}/mark" hx-vals='{{"status": "archived"}}' hx-target="#inbox-row-{eid}" hx-swap="outerHTML">Archive</button>
+                    </div>
+                  </td>
+                </tr>
+                """)
+            rest_html = f"""
+            <div class="table-wrapper" style="margin-top:8px;">
+              <table><thead><tr><th>Earlier</th><th>Delivered</th><th>Actions</th></tr></thead>
+              <tbody>{"".join(rows)}</tbody></table>
+            </div>
+            """
+        sections.append(card + rest_html)
     return f"""
     <div class="panel">
       <div class="panel-header">
@@ -293,8 +387,8 @@ def render_needs_action(home, config) -> str:
     approvals_html = _render_pending_approvals(home, config)
     needs_action = inbox_mod.listing(home, status=inbox_mod.UNREAD, attention=inbox_mod.NEEDS_ACTION)
     fyi = inbox_mod.listing(home, status=inbox_mod.UNREAD, attention=inbox_mod.FYI)
-    needs_action_html = _render_inbox_group("Needs your attention", needs_action)
-    fyi_html = _render_inbox_group("FYI", fyi)
+    needs_action_html = _render_inbox_group(home, config, "Needs your attention", needs_action)
+    fyi_html = _render_inbox_group(home, config, "FYI", fyi)
 
     if not (approvals_html or needs_action_html or fyi_html):
         return '<div class="empty-state"><p>Nothing waiting on you right now.</p></div>'
@@ -335,7 +429,7 @@ def render_inbox_entry_detail_modal(home, config, entry_id: str) -> str:
             <span class="badge badge-dim">{_escape(entry.get('source', ''))}</span>
             <span class="code-font" style="color: var(--text-dim);">from {_escape(entry.get('workflow_id', ''))}</span>
           </div>
-          <pre class="code-view">{_escape(body)}</pre>
+          <div class="markdown-body">{render_markdown(body)}</div>
         </div>
       </div>
     </div>
@@ -758,7 +852,7 @@ def render_run_detail_modal(config, run_id: str) -> str:
 
           <div class="form-group">
             <div class="form-label">Output ({_escape(output_spec.get('target', 'stdout'))})</div>
-            <pre class="code-view">{_escape(output_text or 'No output recorded')}</pre>
+            {f'<div class="markdown-body">{render_markdown(output_text)}</div>' if output_text else '<p class="empty-state">No output recorded</p>'}
           </div>
 
           <div class="form-group">

@@ -4,7 +4,7 @@ import shutil
 import sqlite3
 from pathlib import Path
 
-from px0 import config as config_mod
+from px0 import catalogue, config as config_mod
 from px0 import paths, starters, versioning, SCHEMA_VERSION
 from px0.versioning import FileChange
 
@@ -261,10 +261,14 @@ def verify(home: Path) -> dict:
     return {"checks": checks, "problems": problems, "ok": not problems}
 
 
-def init(home: Path, harness_cmd: str | None = None) -> list[str]:
+def init(home: Path, harness_cmd: str | None = None, starter_content: bool = True) -> list[str]:
     """Scaffold a store at `home`. If `harness_cmd` is given, it overrides
     the default `model.harness_cmd` in the generated config.toml (e.g. to
     point a fresh store at gemini, pi, or opencode instead of claude).
+    `starter_content=False` scaffolds a bare store with no pre-written
+    workflows or seeded catalogue tools -- for tests and anything else that
+    wants a clean base to build its own scenario on; `px0 init` itself always
+    leaves this at the default.
     Returns a list of human-readable lines describing what was created."""
     created: list[str] = []
 
@@ -316,21 +320,30 @@ def init(home: Path, harness_cmd: str | None = None) -> list[str]:
         schema_file.write_text(str(SCHEMA_VERSION))
 
     file_changes = []  # track newly written starter files for the initial version snapshot
-    # Both starter sets are scaffolded the same way. GUIDELINES was previously
-    # declared but never read, so any content added to it silently did nothing.
-    for subdir, entries in (
-        ("workflows", starters.WORKFLOWS),
-        ("guidelines", starters.GUIDELINES),
-    ):
-        base = paths.workflows_dir(home) if subdir == "workflows" else paths.guidelines_dir(home)
-        for name, body in entries.items():
-            dest = base / name
-            if dest.exists():
-                continue
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_text(body)
-            file_changes.append(FileChange(str(dest.relative_to(home)), body.encode()))
-            created.append(f"{subdir}/{name}")
+    if starter_content:
+        # Both starter sets are scaffolded the same way. GUIDELINES was previously
+        # declared but never read, so any content added to it silently did nothing.
+        for subdir, entries in (
+            ("workflows", starters.WORKFLOWS),
+            ("guidelines", starters.GUIDELINES),
+        ):
+            base = paths.workflows_dir(home) if subdir == "workflows" else paths.guidelines_dir(home)
+            for name, body in entries.items():
+                dest = base / name
+                if dest.exists():
+                    continue
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_text(body)
+                file_changes.append(FileChange(str(dest.relative_to(home)), body.encode()))
+                created.append(f"{subdir}/{name}")
+
+        # The starter workflows above reference discovered Composio tools by id;
+        # seed their definitions so those workflows validate and run without a
+        # live catalogue search the moment they're written (see
+        # starters.CATALOGUE_SEED).
+        if starters.CATALOGUE_SEED:
+            catalogue.remember(home, starters.CATALOGUE_SEED)
+
     if cfg_path.exists():
         file_changes.append(
             FileChange(str(cfg_path.relative_to(home)), cfg_path.read_bytes())

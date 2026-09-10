@@ -1,9 +1,11 @@
 # `px0 init`
 
 Scaffold a store: create the folder layout, write `config.toml`, install the
-starter workflows and guidelines, and take the first version snapshot.
+starter workflows, take the first version snapshot, and offer to connect the
+apps those starters use.
 
-Implemented by `px0/store.py` (`store.init`), driven by `cli.cmd_init`.
+Implemented by `px0/store.py` (`store.init`) and `px0/starters.py` (the
+starter content itself), driven by `cli.cmd_init` and `cli._connect_starter_apps`.
 
 ```
 px0 init [dir] [--harness {claude,gemini,opencode,pi}] [--composio-key KEY]
@@ -62,19 +64,44 @@ px0 init --composio-key ak_...
 
 ```
 <store>/
-  workflows/          starter workflows
-  guidelines/         starter guidelines
+  workflows/          the three starters below
+  guidelines/         empty -- guidelines are still something you write
   brain/{docs,blogs,papers,work}/
   output/
   .state/{index,ingest}/
   .state/schema       the on-disk schema version
+  .state/catalogue.json   pre-seeded with the Composio tools the starters use
   config.toml
 ```
 
+Three read-only, view-only starter workflows are always written, whether or
+not their app ends up connected in this run: `github-review-queue` (pull
+requests waiting on your review), `linear-my-issues` (issues assigned to
+you), and `slack-recent-activity` (recent channel/DM activity, summarized --
+Composio exposes no unread state, so this is framed as "recent," not
+"unread"). None of the three ever posts, files, or sends anything; writing a
+workflow that does is still something you ask for with `px0 workflows new`.
+Content lives in `starters.WORKFLOWS`; pass `starter_content=False` to
+`store.init()` to scaffold a bare store without them (what the test suite
+uses).
+
+Once a Composio key is configured (existing, supplied, or just entered), init
+walks the three apps in turn: checks whether each is already connected,
+offers to start authorization if not (prints a consent URL, waits for Enter,
+rechecks), and -- the moment an app is `ACTIVE` -- runs its starter workflow
+immediately via `runner.run(..., trigger="manual")` and prints the first line
+of what it found. An app left unconnected (skipped, or the consent never
+finished) has its workflow's `enabled` frontmatter key set to `false` rather
+than left to fail on the daemon's first scheduled fire; `px0 tools connect
+<app>` then `px0 workflows enable <id>` turns it back on later. No Composio
+key at all skips this whole step with a hint, same as the key prompt itself
+under non-interactive stdin.
+
 ## Output
 
-Lists what was created, then points at the next step. It closes by mentioning
-that `brain.path` can point at an existing Markdown folder — see
+Lists what was created, then points at the next step -- `px0 ui`, to see
+whatever the connected starters found, ahead of `px0 workflows new`. It also
+mentions that `brain.path` can point at an existing Markdown folder -- see
 [`px0 brain`](brain.md#pointing-the-brain-at-an-existing-vault).
 
 ## Exit codes

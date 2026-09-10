@@ -94,10 +94,15 @@ def _clean_composio_env(monkeypatch):
 
 @pytest.fixture
 def tmp_home(tmp_path):
-    """Creates a temporary initialized store and returns its Path."""
+    """Creates a temporary initialized store and returns its Path.
+
+    Bare on purpose (`starter_content=False`): most tests build their own
+    workflows/tools on top of this and assert on an otherwise-empty store.
+    Day-0 starter content is covered separately, in tests/test_starters.py.
+    """
     home_path = tmp_path / "px0_home"
     home_path.mkdir()
-    store.init(home_path)
+    store.init(home_path, starter_content=False)
     return home_path
 
 

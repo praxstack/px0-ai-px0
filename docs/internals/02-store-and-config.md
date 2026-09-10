@@ -27,7 +27,9 @@ Two details in that function are deliberate and easy to miss.
 
 `tools/example.toml.sample` is written with a suffix the loader ignores. Scaffolding a live tool into every store would put something nobody asked for into `px0 tools list`; a `.sample` is a worked example you copy to make real.
 
-px0 ships no workflows and no guidelines. `starters.WORKFLOWS` and `starters.GUIDELINES` are both empty dicts. What `starters` actually ships is sentences: `RECIPES` is a list of things people build, phrased the way you would say them during the interview. Picking one fills in the first answer, so the interview proceeds exactly as if you had typed it, and every workflow in a store is still something the user asked for.
+px0 ships three workflows, not none. `starters.WORKFLOWS` holds one read-only, view-only starter each for GitHub, Linear, and Slack -- what almost every engineer already has open -- and `store.init` writes them, then seeds `.state/catalogue.json` from `starters.CATALOGUE_SEED` so they validate and run without a live catalogue search. `starters.GUIDELINES` stays an empty dict: nothing about how output should read is opinionated for you.
+
+Past those three, `starters` still ships sentences, not files: `RECIPES` is a list of things people build, phrased the way you would say them during the interview. Picking one fills in the first answer, so the interview proceeds exactly as if you had typed it, and every write-capable workflow in a store is still something the user asked for. `cmd_init` also calls `cli._connect_starter_apps`, which offers to connect each of the three apps and runs the matching starter the moment one is; an app left unconnected has its starter's `enabled` frontmatter flipped to `false` rather than left to fail on the daemon's first scheduled fire. Pass `starter_content=False` to `store.init` for a bare store with none of this -- what the test suite's `tmp_home` fixture uses, since most tests want to build their own scenario rather than account for three pre-existing workflows.
 
 ## The configuration schema
 

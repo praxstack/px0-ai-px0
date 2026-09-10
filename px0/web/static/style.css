@@ -469,3 +469,70 @@ pre.code-view {
 .empty-state p {
   margin-top: 8px;
 }
+
+/* Rendered workflow output (see views.render_markdown) */
+.markdown-body {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3 {
+  margin: 12px 0 6px;
+  color: var(--text);
+}
+
+.markdown-body h1:first-child,
+.markdown-body h2:first-child,
+.markdown-body h3:first-child {
+  margin-top: 0;
+}
+
+.markdown-body p {
+  margin: 6px 0;
+  line-height: 1.55;
+}
+
+.markdown-body ul {
+  padding-left: 20px;
+  margin: 6px 0;
+}
+
+.markdown-body li {
+  margin: 3px 0;
+}
+
+.markdown-body a {
+  color: var(--info);
+}
+
+.markdown-body code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background-color: var(--bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+/* Needs-action glance card: the latest entry per source, shown in full --
+   the "see everything at a glance" surface, no click required to read it. */
+.source-card {
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  padding: 14px;
+  margin-top: 14px;
+  background-color: var(--panel-hover);
+}
+
+.source-card:first-child {
+  margin-top: 0;
+}
+
+.source-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
