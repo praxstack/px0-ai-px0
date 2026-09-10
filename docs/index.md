@@ -15,6 +15,7 @@ you can open in any editor.
 | [Workflow use cases](workflow_usecases.md) | 120 jobs to build, and the apps each one touches |
 | [Configuration keys](reference/configuration.md) | Every `config.toml` key, its type and effect |
 | [Store layout](reference/store-layout.md) | What each folder and state file holds |
+| [Integrations guide](integrations.md) | How to configure Linear, GitHub, and Slack tokens |
 
 ## Asking it things
 

@@ -256,6 +256,9 @@ def cmd_init(args: argparse.Namespace) -> None:
     ui.hint("already keep notes in Obsidian, Logseq, or any folder of Markdown?")
     ui.command("px0 config set brain.path ~/path/to/your/vault")
 
+    _prompt_issue_tracker(home)
+    _prompt_slack_messaging(home)
+
     _connect_starter_apps(home)
 
     ui.hint("try next:")
@@ -275,6 +278,83 @@ _STARTER_APPS = [
     ("linear", "linear-my-issues"),
     ("slack", "slack-recent-activity"),
 ]
+
+
+def _prompt_issue_tracker(home: Path) -> None:
+    """Prompts the user to connect an issue tracker (Linear, GitHub, or Skip)
+    and saves the API key/token into credentials.toml."""
+    options = [
+        ("Linear", "connect using Linear API key"),
+        ("GitHub", "connect using GitHub Personal Access Token"),
+        ("None", "skip issue tracker configuration"),
+    ]
+    ui.hint("choose an issue tracker to connect:")
+    try:
+        chosen = ui.select("Issue tracker", options)
+    except EOFError:
+        return
+
+    if chosen is None or chosen == 2:  # None / Cancel / Skip
+        return
+
+    if chosen == 0:  # Linear
+        ui.hint("how to get a Linear API key:")
+        ui.bullet("1. Go to https://linear.app/settings/account/api")
+        ui.bullet("2. Under 'Personal API keys', click 'Create key'")
+        ui.bullet("3. Give it a label (e.g. 'px0') and copy the key")
+        try:
+            key = ui.prompt("Linear API key: ")
+        except EOFError:
+            return
+        if key.strip():
+            creds_mod.set_service(home, "linear", {"api_key": key.strip()})
+            ui.ok("saved Linear API key to credentials")
+        else:
+            ui.info("skipped Linear configuration")
+
+    elif chosen == 1:  # GitHub
+        ui.hint("how to get a GitHub Personal Access Token:")
+        ui.bullet("1. Go to https://github.com/settings/tokens (classic) or tokens?type=beta (fine-grained)")
+        ui.bullet("2. Click 'Generate new token'")
+        ui.bullet("3. Grant 'repo' (or 'issues:read/write') scope and copy the token")
+        try:
+            token = ui.prompt("GitHub Personal Access Token: ")
+        except EOFError:
+            return
+        if token.strip():
+            creds_mod.set_service(home, "github", {"token": token.strip()})
+            ui.ok("saved GitHub token to credentials")
+        else:
+            ui.info("skipped GitHub configuration")
+
+
+def _prompt_slack_messaging(home: Path) -> None:
+    """Prompts the user to connect Slack as a messaging tool and saves the token
+    into credentials.toml."""
+    ui.hint("messaging tool integration:")
+    try:
+        answer = ui.prompt("Connect Slack as messaging tool? [y/N]: ")
+    except EOFError:
+        return
+
+    if answer.lower() not in ("y", "yes"):
+        return
+
+    ui.hint("how to get a Slack Bot or User Token:")
+    ui.bullet("1. Go to https://api.slack.com/apps and create/select your App")
+    ui.bullet("2. Under 'OAuth & Permissions' -> 'Scopes', add Bot Token Scopes:")
+    ui.bullet("   chat:write, channels:read, channels:history, app_mentions:read, reactions:write")
+    ui.bullet("3. Click 'Install to Workspace' and copy the Bot User OAuth Token (xoxb-...)")
+    try:
+        token = ui.prompt("Slack Bot/User Token (xoxb-... or xoxp-...): ")
+    except EOFError:
+        return
+
+    if token.strip():
+        creds_mod.set_service(home, "slack", {"token": token.strip()})
+        ui.ok("saved Slack token to credentials")
+    else:
+        ui.info("skipped Slack messaging configuration")
 
 
 def _connect_starter_apps(home: Path) -> None:

@@ -6,6 +6,7 @@ Implements BaseIssueTracker using GitHub REST API v3.
 
 from datetime import datetime
 import os
+from pathlib import Path
 import shutil
 import subprocess
 from typing import Any, Dict, List, Optional
@@ -61,6 +62,20 @@ def _get_default_github_token() -> Optional[str]:
             ).strip()
             if out:
                 return out
+        except Exception:
+            pass
+
+    # Check px0 credentials file
+    px0_creds = Path(os.getenv("PX0_HOME", "~/.px0")).expanduser() / ".state" / "credentials.toml"
+    if px0_creds.is_file():
+        try:
+            import tomllib
+            with open(px0_creds, "rb") as f:
+                data = tomllib.load(f)
+            gh_entry = data.get("github", {})
+            val = gh_entry.get("token") or gh_entry.get("api_key")
+            if val:
+                return val
         except Exception:
             pass
 

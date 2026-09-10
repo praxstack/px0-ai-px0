@@ -72,7 +72,7 @@ pip install -e .
 px0 init
 ```
 
-This creates `~/.px0` and asks for your Composio API key. Skip the key if you do not have one yet, and set it later with `px0 config composio <key>`.
+This creates `~/.px0` and asks for your Composio API key (skip it if you do not have one yet, and set it later with `px0 config composio <key>`). It then prompts to connect an issue tracker (**Linear** or **GitHub**) and **Slack** messaging with direct instructions on how to generate their API keys/tokens, saving them to `.state/credentials.toml`.
 
 Using a backend other than `claude`? Point px0 at it:
 

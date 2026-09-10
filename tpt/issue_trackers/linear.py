@@ -6,6 +6,7 @@ Implements BaseIssueTracker using Linear's GraphQL API.
 
 from datetime import datetime
 import os
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 import requests
 
@@ -60,6 +61,20 @@ def _get_default_linear_token() -> Optional[str]:
                         val = line.split("=", 1)[1].strip().strip('"').strip("'")
                         if val:
                             return val
+        except Exception:
+            pass
+
+    # Check px0 credentials file
+    px0_creds = Path(os.getenv("PX0_HOME", "~/.px0")).expanduser() / ".state" / "credentials.toml"
+    if px0_creds.is_file():
+        try:
+            import tomllib
+            with open(px0_creds, "rb") as f:
+                data = tomllib.load(f)
+            linear_entry = data.get("linear", {})
+            val = linear_entry.get("api_key") or linear_entry.get("token")
+            if val:
+                return val
         except Exception:
             pass
 

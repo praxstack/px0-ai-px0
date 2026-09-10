@@ -86,7 +86,16 @@ Content lives in `starters.WORKFLOWS`; pass `starter_content=False` to
 uses).
 
 Once a Composio key is configured (existing, supplied, or just entered), init
-walks the three apps in turn: checks whether each is already connected,
+prompts to connect an issue tracker and a messaging tool:
+
+1. **Issue Tracker** (`Linear`, `GitHub`, or `None`):
+   - **Linear:** Requires a personal API key. Create one at `https://linear.app/settings/account/api` under *Personal API keys*. Stored in `.state/credentials.toml` under `[linear]`.
+   - **GitHub:** Requires a Personal Access Token (`repo` or `issues` scope). Generate one at `https://github.com/settings/tokens`. Stored in `.state/credentials.toml` under `[github]`.
+
+2. **Messaging Tool** (`Slack`):
+   - **Slack:** Requires a Bot User OAuth Token (`xoxb-...`) or User Token (`xoxp-...`). Create an app at `https://api.slack.com/apps`, add bot scopes (`chat:write`, `channels:read`, `channels:history`, `app_mentions:read`, `reactions:write`), install it to your workspace, and provide the token. Stored in `.state/credentials.toml` under `[slack]`.
+
+Then init walks the three starter apps in turn: checks whether each is already connected,
 offers to start authorization if not (prints a consent URL, waits for Enter,
 rechecks), and -- the moment an app is `ACTIVE` -- runs its starter workflow
 immediately via `runner.run(..., trigger="manual")` and prints the first line
