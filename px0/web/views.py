@@ -157,14 +157,14 @@ def page_shell(content: str, active_tab: str = "needs-action", daemon_status: di
 <body>
   <header>
     <div class="logo-area">
-      <a href="/" class="brand" hx-get="/api/views/needs-action" hx-target="#main-view" hx-push-url="/">px0<span>web</span></a>
+      <a href="/" class="brand" hx-get="/htmx/views/needs-action" hx-target="#main-view" hx-push-url="/">px0<span>web</span></a>
       <nav>
-        <a href="/" class="nav-btn {t_na}" hx-get="/api/views/needs-action" hx-target="#main-view" hx-push-url="/">Needs Action</a>
-        <a href="/stats" class="nav-btn {t_stats}" hx-get="/api/views/dashboard" hx-target="#main-view" hx-push-url="/stats">Stats</a>
-        <a href="/workflows" class="nav-btn {t_wf}" hx-get="/api/views/workflows" hx-target="#main-view" hx-push-url="/workflows">Workflows</a>
-        <a href="/schedules" class="nav-btn {t_sched}" hx-get="/api/views/schedules" hx-target="#main-view" hx-push-url="/schedules">Schedules</a>
-        <a href="/runs" class="nav-btn {t_runs}" hx-get="/api/views/runs" hx-target="#main-view" hx-push-url="/runs">Runs</a>
-        <a href="/daemon" class="nav-btn {t_daemon}" hx-get="/api/views/daemon" hx-target="#main-view" hx-push-url="/daemon">Daemon</a>
+        <a href="/" class="nav-btn {t_na}" hx-get="/htmx/views/needs-action" hx-target="#main-view" hx-push-url="/">Needs Action</a>
+        <a href="/stats" class="nav-btn {t_stats}" hx-get="/htmx/views/dashboard" hx-target="#main-view" hx-push-url="/stats">Stats</a>
+        <a href="/workflows" class="nav-btn {t_wf}" hx-get="/htmx/views/workflows" hx-target="#main-view" hx-push-url="/workflows">Workflows</a>
+        <a href="/schedules" class="nav-btn {t_sched}" hx-get="/htmx/views/schedules" hx-target="#main-view" hx-push-url="/schedules">Schedules</a>
+        <a href="/runs" class="nav-btn {t_runs}" hx-get="/htmx/views/runs" hx-target="#main-view" hx-push-url="/runs">Runs</a>
+        <a href="/daemon" class="nav-btn {t_daemon}" hx-get="/htmx/views/daemon" hx-target="#main-view" hx-push-url="/daemon">Daemon</a>
       </nav>
     </div>
     <div class="header-status">
@@ -187,7 +187,7 @@ def page_shell(content: str, active_tab: str = "needs-action", daemon_status: di
 def render_daemon_badge(daemon_status: dict, start_failed: bool = False) -> str:
     """The header's daemon status pill. When the daemon is down it doubles as
     a start control: a button that asks the server to spawn it in the
-    background (`/api/daemon/action?act=start&scope=header`), and, if that
+    background (`/htmx/daemon/action?act=start&scope=header`), and, if that
     doesn't bring it up, the exact command (`daemon_mod.START_COMMAND`) to
     run by hand -- the same single source used by `px0 status` and the
     playlist-ingest hint, so it can't say something different from the CLI.
@@ -201,7 +201,7 @@ def render_daemon_badge(daemon_status: dict, start_failed: bool = False) -> str:
     if not is_alive:
         start_btn = (
             '<button class="btn btn-primary btn-sm" style="margin-left:6px;" '
-            'hx-post="/api/daemon/action?act=start&scope=header" '
+            'hx-post="/htmx/daemon/action?act=start&scope=header" '
             'hx-target="#header-daemon-badge" hx-swap="outerHTML">Start</button>'
         )
         if start_failed:
@@ -211,7 +211,7 @@ def render_daemon_badge(daemon_status: dict, start_failed: bool = False) -> str:
                 '</div>'
             )
     return (
-        '<div id="header-daemon-badge" hx-get="/api/daemon/badge" hx-trigger="every 5s" hx-swap="outerHTML">'
+        '<div id="header-daemon-badge" hx-get="/htmx/daemon/badge" hx-trigger="every 5s" hx-swap="outerHTML">'
         '<div style="display:flex; align-items:center;">'
         f'<span class="badge {badge_cls}">'
         f'<span class="dot {dot_cls}"></span>'
@@ -234,9 +234,9 @@ def render_needs_action_badge(home, config) -> str:
     badge_cls = "badge-info" if count else "badge-dim"
     label = f"needs action: {count}" if count else "needs action: 0"
     return (
-        '<div id="header-needs-action-badge" hx-get="/api/needs-action/badge" '
+        '<div id="header-needs-action-badge" hx-get="/htmx/needs-action/badge" '
         'hx-trigger="every 5s" hx-swap="outerHTML">'
-        f'<a href="/" hx-get="/api/views/needs-action" hx-target="#main-view" '
+        f'<a href="/" hx-get="/htmx/views/needs-action" hx-target="#main-view" '
         f'hx-push-url="/" style="text-decoration:none;">'
         f'<span class="badge {badge_cls}">'
         f'<span class="dot {"dot-amber" if count else "dot-green"}"></span>'
@@ -270,7 +270,7 @@ def render_dashboard(home, config) -> str:
                 f'<td><span class="code-font">{wf_id}</span></td>'
                 f'<td><span class="badge {badge_class}">{_escape(outcome)}</span></td>'
                 f'<td class="code-font">{st}</td>'
-                f'<td><button class="btn btn-secondary btn-sm" hx-get="/api/runs/{run_id}" hx-target="#modal-container">Details</button></td>'
+                f'<td><button class="btn btn-secondary btn-sm" hx-get="/htmx/runs/{run_id}" hx-target="#modal-container">Details</button></td>'
                 f'</tr>'
             )
         runs_html = (
@@ -312,7 +312,7 @@ def render_dashboard(home, config) -> str:
     <div class="panel">
       <div class="panel-header">
         <div class="panel-title">Recent Historical Runs</div>
-        <a href="/runs" class="btn btn-secondary btn-sm" hx-get="/api/views/runs" hx-target="#main-view" hx-push-url="/runs">View All Runs</a>
+        <a href="/runs" class="btn btn-secondary btn-sm" hx-get="/htmx/views/runs" hx-target="#main-view" hx-push-url="/runs">View All Runs</a>
       </div>
       {runs_html}
     </div>
@@ -335,8 +335,8 @@ def _render_pending_approvals(pending: list[dict]) -> str:
               <span style="color: var(--text-dim); margin-left:8px;">from {_escape(a.get('workflow_id'))}</span>
             </div>
             <div style="display:flex; gap:6px;">
-              <button class="btn btn-primary btn-sm" hx-post="/api/approvals/{aid}/approve" hx-target="#approval-{aid}" hx-swap="outerHTML">Approve</button>
-              <button class="btn btn-danger btn-sm" hx-post="/api/approvals/{aid}/reject" hx-target="#approval-{aid}" hx-swap="outerHTML">Reject</button>
+              <button class="btn btn-primary btn-sm" hx-post="/htmx/approvals/{aid}/approve" hx-target="#approval-{aid}" hx-swap="outerHTML">Approve</button>
+              <button class="btn btn-danger btn-sm" hx-post="/htmx/approvals/{aid}/reject" hx-target="#approval-{aid}" hx-swap="outerHTML">Reject</button>
             </div>
           </div>
           <div class="code-font" style="color: var(--text-dim); margin-top:6px;">args: {args_preview}</div>
@@ -379,7 +379,7 @@ def _render_inbox_group(home, config, title: str, entries: list[dict]) -> str:
             <span class="badge badge-dim">{_escape(source)}</span>
             <span class="code-font" style="color: var(--text-dim);">{latest_created}</span>
             <div style="flex:1;"></div>
-            <button class="btn btn-secondary btn-sm" hx-post="/api/inbox/{latest_id}/mark" hx-vals='{{"status": "archived"}}' hx-target="#inbox-row-{latest_id}" hx-swap="outerHTML">Archive</button>
+            <button class="btn btn-secondary btn-sm" hx-post="/htmx/inbox/{latest_id}/mark" hx-vals='{{"status": "archived"}}' hx-target="#inbox-row-{latest_id}" hx-swap="outerHTML">Archive</button>
           </div>
           <div class="markdown-body">{render_markdown(latest_body)}</div>
         </div>
@@ -397,8 +397,8 @@ def _render_inbox_group(home, config, title: str, entries: list[dict]) -> str:
                   <td class="code-font" style="color: var(--text-dim);">{created}</td>
                   <td>
                     <div style="display:flex; gap:6px;">
-                      <button class="btn btn-secondary btn-sm" hx-get="/api/inbox/{eid}" hx-target="#modal-container">Open</button>
-                      <button class="btn btn-secondary btn-sm" hx-post="/api/inbox/{eid}/mark" hx-vals='{{"status": "archived"}}' hx-target="#inbox-row-{eid}" hx-swap="outerHTML">Archive</button>
+                      <button class="btn btn-secondary btn-sm" hx-get="/htmx/inbox/{eid}" hx-target="#modal-container">Open</button>
+                      <button class="btn btn-secondary btn-sm" hx-post="/htmx/inbox/{eid}/mark" hx-vals='{{"status": "archived"}}' hx-target="#inbox-row-{eid}" hx-swap="outerHTML">Archive</button>
                     </div>
                   </td>
                 </tr>
@@ -437,7 +437,7 @@ def render_portal_section(app: str, text: str | None, updated_at: float | None) 
         <span class="badge badge-dim">live</span>
         <span class="code-font" style="color: var(--text-dim);">updated {_escape(when)}</span>
         <div style="flex:1;"></div>
-        <button class="btn btn-secondary btn-sm" hx-post="/api/portal/{_escape(app)}/refresh"
+        <button class="btn btn-secondary btn-sm" hx-post="/htmx/portal/{_escape(app)}/refresh"
                 hx-target="#portal-{_escape(app)}" hx-swap="innerHTML">Refresh</button>
       </div>
       <div class="markdown-body">{body}</div>
@@ -534,7 +534,7 @@ def render_needs_action(home, config) -> str:
         var el = document.getElementById('portal-' + app);
         if (!el || el.dataset.loaded === '1') return;
         el.dataset.loaded = '1';
-        htmx.ajax('GET', '/api/portal/' + app, {{target: '#portal-' + app, swap: 'innerHTML'}});
+        htmx.ajax('GET', '/htmx/portal/' + app, {{target: '#portal-' + app, swap: 'innerHTML'}});
       }}
       pxLoadPortal('{default_app}');
     </script>
@@ -615,10 +615,10 @@ def render_workflows_list(home, config) -> str:
           <td class="code-font" style="color: var(--text-dim);">{_escape(tools_summary)}</td>
           <td>
             <div style="display: flex; gap: 6px;">
-              <button class="btn btn-primary btn-sm" hx-get="/api/workflows/{_escape(wf_id)}/run-modal" hx-target="#modal-container">Run</button>
-              <button class="btn btn-secondary btn-sm" hx-get="/api/workflows/{_escape(wf_id)}" hx-target="#modal-container">View</button>
+              <button class="btn btn-primary btn-sm" hx-get="/htmx/workflows/{_escape(wf_id)}/run-modal" hx-target="#modal-container">Run</button>
+              <button class="btn btn-secondary btn-sm" hx-get="/htmx/workflows/{_escape(wf_id)}" hx-target="#modal-container">View</button>
               <button class="btn btn-secondary btn-sm" 
-                      hx-post="/api/workflows/{_escape(wf_id)}/toggle" 
+                      hx-post="/htmx/workflows/{_escape(wf_id)}/toggle" 
                       hx-target="#wf-row-{_escape(wf_id)}" 
                       hx-swap="outerHTML">
                 {toggle_label}
@@ -681,10 +681,10 @@ def render_workflow_row(wf) -> str:
       <td class="code-font" style="color: var(--text-dim);">{_escape(tools_summary)}</td>
       <td>
         <div style="display: flex; gap: 6px;">
-          <button class="btn btn-primary btn-sm" hx-get="/api/workflows/{_escape(wf.id)}/run-modal" hx-target="#modal-container">Run</button>
-          <button class="btn btn-secondary btn-sm" hx-get="/api/workflows/{_escape(wf.id)}" hx-target="#modal-container">View</button>
+          <button class="btn btn-primary btn-sm" hx-get="/htmx/workflows/{_escape(wf.id)}/run-modal" hx-target="#modal-container">Run</button>
+          <button class="btn btn-secondary btn-sm" hx-get="/htmx/workflows/{_escape(wf.id)}" hx-target="#modal-container">View</button>
           <button class="btn btn-secondary btn-sm" 
-                  hx-post="/api/workflows/{_escape(wf.id)}/toggle" 
+                  hx-post="/htmx/workflows/{_escape(wf.id)}/toggle" 
                   hx-target="#wf-row-{_escape(wf.id)}" 
                   hx-swap="outerHTML">
             {toggle_label}
@@ -750,7 +750,7 @@ def render_workflow_detail_modal(wf) -> str:
           </div>
         </div>
         <div class="modal-footer">
-          <button class="btn btn-primary" hx-get="/api/workflows/{_escape(wf.id)}/run-modal" hx-target="#modal-container">Run Workflow</button>
+          <button class="btn btn-primary" hx-get="/htmx/workflows/{_escape(wf.id)}/run-modal" hx-target="#modal-container">Run Workflow</button>
           <button class="btn btn-secondary" onclick="closeModal()">Close</button>
         </div>
       </div>
@@ -793,11 +793,11 @@ def render_schedules_list(home, config) -> str:
           <td>{status_badge}</td>
           <td>
             <div style="display: flex; gap: 6px;">
-              <button class="btn btn-primary btn-sm" hx-get="/api/schedules/{_escape(wf_id)}/edit" hx-target="#modal-container">Edit Schedule</button>
+              <button class="btn btn-primary btn-sm" hx-get="/htmx/schedules/{_escape(wf_id)}/edit" hx-target="#modal-container">Edit Schedule</button>
               <button class="btn btn-secondary btn-sm" 
-                      hx-post="/api/workflows/{_escape(wf_id)}/toggle" 
+                      hx-post="/htmx/workflows/{_escape(wf_id)}/toggle" 
                       hx-target="#main-view" 
-                      hx-get="/api/views/schedules">
+                      hx-get="/htmx/views/schedules">
                 {toggle_label}
               </button>
             </div>
@@ -849,7 +849,7 @@ def render_schedule_edit_modal(wf) -> str:
           <div class="panel-title">Edit Schedule: <span class="code-id">{_escape(wf.id)}</span></div>
           <button class="btn btn-secondary btn-sm" onclick="closeModal()">Close</button>
         </div>
-        <form hx-post="/api/schedules/{_escape(wf.id)}/update" hx-target="#main-view">
+        <form hx-post="/htmx/schedules/{_escape(wf.id)}/update" hx-target="#main-view">
           <div class="modal-body">
             <div class="form-group">
               <label class="form-label">Cron Expression</label>
@@ -900,7 +900,7 @@ def render_runs_list(config) -> str:
           <td class="code-font">{tool_calls_count}</td>
           <td class="code-font">{st_str}</td>
           <td>
-            <button class="btn btn-secondary btn-sm" hx-get="/api/runs/{run_id}" hx-target="#modal-container">Details</button>
+            <button class="btn btn-secondary btn-sm" hx-get="/htmx/runs/{run_id}" hx-target="#modal-container">Details</button>
           </td>
         </tr>
         """)
@@ -935,7 +935,7 @@ def render_runs_list(config) -> str:
     <div class="panel">
       <div class="panel-header">
         <div class="panel-title">Historical Runs ({len(records)})</div>
-        <button class="btn btn-secondary btn-sm" hx-get="/api/views/runs" hx-target="#main-view">Refresh</button>
+        <button class="btn btn-secondary btn-sm" hx-get="/htmx/views/runs" hx-target="#main-view">Refresh</button>
       </div>
       {table_content}
     </div>
@@ -1057,7 +1057,7 @@ def render_run_modal(wf) -> str:
           <div class="panel-title">Run Workflow: <span class="code-id">{_escape(wf.id)}</span></div>
           <button class="btn btn-secondary btn-sm" onclick="closeModal()">Close</button>
         </div>
-        <form hx-post="/api/workflows/{_escape(wf.id)}/trigger" hx-target="#run-status-result">
+        <form hx-post="/htmx/workflows/{_escape(wf.id)}/trigger" hx-target="#run-status-result">
           <div class="modal-body">
             <p style="color: var(--text-dim); margin-bottom: 12px;">{_escape(wf.description or 'Execute this workflow immediately.')}</p>
             {vars_inputs_html}
@@ -1094,7 +1094,7 @@ def render_daemon_view(home, config) -> str:
         daemon_log_tail = "No daemon.log found yet."
 
     status_badge = f'<span class="badge badge-success"><span class="dot dot-green"></span> RUNNING (PID {pid})</span>' if alive else '<span class="badge badge-danger"><span class="dot dot-red"></span> STOPPED</span>'
-    action_btn = '<button class="btn btn-danger btn-sm" hx-post="/api/daemon/action?act=stop" hx-target="#main-view">Stop Daemon</button>' if alive else '<button class="btn btn-primary btn-sm" hx-post="/api/daemon/action?act=start" hx-target="#main-view">Start Daemon</button>'
+    action_btn = '<button class="btn btn-danger btn-sm" hx-post="/htmx/daemon/action?act=stop" hx-target="#main-view">Stop Daemon</button>' if alive else '<button class="btn btn-primary btn-sm" hx-post="/htmx/daemon/action?act=start" hx-target="#main-view">Start Daemon</button>'
 
     return f"""
     <div id="daemon-panel" class="panel">
@@ -1102,7 +1102,7 @@ def render_daemon_view(home, config) -> str:
         <div class="panel-title">Daemon Control & Observability</div>
         <div style="display: flex; gap: 8px;">
           <button class="btn btn-secondary btn-sm" 
-                  hx-post="/api/daemon/action?act=tick" 
+                  hx-post="/htmx/daemon/action?act=tick" 
                   hx-target="#daemon-action-result">
             Tick Now
           </button>
