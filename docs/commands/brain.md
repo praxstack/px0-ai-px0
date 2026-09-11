@@ -9,6 +9,8 @@ search), and `px0/ask.py` (retrieval plus generation).
 
 ```
 px0 brain add <source> [--to FOLDER] [--from-file PATH]
+px0 brain record [--title TITLE] [--model MODEL] [--to FOLDER]
+px0 brain listen [--port PORT] [--host HOST] [--model MODEL]
 px0 brain refresh [path] [--all] [--stale] [--days N]
 px0 brain list
 px0 brain show <path> [--json]
@@ -44,6 +46,7 @@ What to ingest.
 | `.docx`, `.odt` | `pandoc` when installed, else a stdlib zip+XML reader | `docs/` |
 | `.doc` | `pandoc` only — the legacy binary format has no fallback | `docs/` |
 | `.md`, `.markdown`, `.txt`, `.text`, `.rst`, `.org` | read as-is | `docs/` |
+| `.wav`, `.mp3`, `.m4a`, `.ogg`, `.flac` | transcribed locally with `faster-whisper` | `work/` |
 | YouTube video | `youtube-transcript-api` | `docs/` |
 | YouTube playlist | queued for the daemon — see below | `docs/` |
 
@@ -157,6 +160,38 @@ What counts as stale.
 
 ```shell
 px0 brain refresh --stale --days 90
+```
+
+---
+
+## `px0 brain record`
+
+Record a live meeting in real time. It mixes your system audio (speakers loopback)
+and microphone into a raw WAV file under `~/.px0/meetings/`, transcribes the conversation
+with `faster-whisper`, formats the meeting note, and indexes it into your brain.
+
+```shell
+px0 brain record --title "Sprint Planning"
+```
+
+### Options:
+- `--title TITLE`: Name of the meeting (default: `Meeting YYYY-MM-DD HH:MM`).
+- `--model MODEL`: Whisper model size (`tiny.en`, `base.en`, `small.en`, etc., default: `base.en`).
+- `--to FOLDER`: Brain subfolder to file into (default: `work`).
+
+When the meeting ends, press `Ctrl+C` to stop recording and begin local transcription.
+
+---
+
+## `px0 brain listen`
+
+Start the local HTTP trigger daemon on `127.0.0.1:8765`. This enables automatic recording
+when using the **px0 Chrome Extension** (`extensions/chrome-meet-trigger/`):
+- Entering an active Google Meet / Zoom / Teams room automatically triggers recording.
+- Leaving the call automatically stops recording, transcribes, and indexes into your brain.
+
+```shell
+px0 brain listen [--port 8765] [--model base.en]
 ```
 
 ---

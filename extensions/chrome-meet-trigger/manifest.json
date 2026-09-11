@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "px0 Meeting Auto-Recorder",
+  "version": "1.0.0",
+  "description": "Auto-activates px0 local meeting recorder when joining Google Meet, Zoom, or Teams.",
+  "permissions": [],
+  "host_permissions": [
+    "http://127.0.0.1:8765/*",
+    "http://localhost:8765/*",
+    "*://meet.google.com/*",
+    "*://*.zoom.us/*",
+    "*://teams.microsoft.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "*://meet.google.com/*",
+        "*://*.zoom.us/wc/*",
+        "*://*.zoom.us/j/*",
+        "*://teams.microsoft.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "px0 Meeting Recorder"
+  }
+}

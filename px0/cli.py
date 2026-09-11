@@ -21,6 +21,7 @@ from px0 import (
     analysis as analysis_mod,
     approvals as approvals_mod,
     ask as ask_mod,
+    audio as audio_mod,
     authoring,
     commands as commands_mod,
     catalogue as catalogue_mod,
@@ -3170,6 +3171,103 @@ def cmd_brain(args: argparse.Namespace) -> None:
             sys.exit(EXIT_USER_ERROR)
         ui.ok("refreshed", str(result.path))
         return
+
+
+def cmd_brain_record(args: argparse.Namespace) -> None:
+    """Handles `px0 brain record`: captures live meeting audio from speaker loopback
+    and microphone, transcribes with Whisper, and indexes directly into brain."""
+    home, config = _ctx()
+    sink_monitor, mic_source = audio_mod.detect_pulse_devices()
+
+    title = args.title or f"Meeting {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+    ui.heading("meeting recorder")
+    ui.kv("speakers", sink_monitor)
+    ui.kv("microphone", mic_source)
+    ui.kv("model", args.model)
+    ui.kv("target folder", f"brain/{args.to}/")
+    ui.remark("Recording both sides of conversation (speaker audio + mic).")
+    ui.hint("Press Ctrl+C to stop meeting recording and begin transcription...")
+
+    recorder = audio_mod.LiveMeetingRecorder(sink_monitor=sink_monitor, mic_source=mic_source)
+    try:
+        recorder.start()
+    except audio_mod.AudioCaptureError as e:
+        ui.err("failed to start audio capture", str(e))
+        sys.exit(EXIT_USER_ERROR)
+
+    try:
+        while True:
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        print()
+        ui.info("stopping recording...")
+
+    try:
+        recording = recorder.stop()
+    except Exception as e:
+        ui.err("failed to finalize audio", str(e))
+        sys.exit(EXIT_USER_ERROR)
+
+    mins = round(recording.duration_seconds / 60, 1)
+    ui.ok("recorded", f"{mins} min ({recording.wav_path.name})")
+
+    try:
+        with ui.spinner(f"Transcribing audio with {args.model}"):
+            segments, lang = audio_mod.transcribe_audio(recording.wav_path, model_size=args.model)
+    except Exception as e:
+        ui.err("transcription failed", str(e))
+        sys.exit(EXIT_USER_ERROR)
+
+    header, body = audio_mod.build_meeting_markdown(
+        title=title,
+        recording=recording,
+        segments=segments,
+    )
+
+    slug = brain_mod._slug_from_source(f"meeting-{datetime.now().strftime('%Y%m%d-%H%M')}-{title}")
+    dest = brain_mod.brain_path(home, config) / brain_mod.resolve_folder(home, config, args.to) / f"{slug}.md"
+    brain_mod.write_file(dest, header, body)
+    ui.ok("meeting note written", str(dest))
+
+    with ui.spinner("Updating brain index"):
+        retrieval.reindex(home, config)
+    ui.ok("indexed into brain", f"{dest.name}")
+    ui.hint(f"ask questions with: px0 ask \"what was discussed in {title}?\"")
+
+
+def cmd_brain_listen(args: argparse.Namespace) -> None:
+    """Handles `px0 brain listen`: starts the local HTTP daemon that the browser
+    extension calls when a Google Meet or web meeting begins/ends."""
+    from px0 import meeting_server
+
+    home, config = _ctx()
+    ui.heading("meeting auto-trigger daemon")
+    ui.kv("host", args.host)
+    ui.kv("port", args.port)
+    ui.kv("model", args.model)
+    ui.kv("recordings folder", str(paths.meetings_dir(home)))
+    ui.kv("brain destination", "brain/work/")
+    ui.remark("Listening for browser meeting start/stop events...")
+    ui.hint("Keep this running, or set it up as a system service. Press Ctrl+C to stop.")
+
+    server = meeting_server.run_server(
+        home=home,
+        config=config,
+        host=args.host,
+        port=args.port,
+    )
+    # Configure server's meeting manager with options
+    server.RequestHandlerClass  # warm up
+
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print()
+        ui.info("stopping meeting listener daemon...")
+        server.shutdown()
+        ui.ok("stopped")
+
+
 
 
 # --- guidelines ----------------------------------------------------------
