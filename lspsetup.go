@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -266,15 +265,12 @@ func localPost(w http.ResponseWriter, r *http.Request) bool {
 		fail(w, http.StatusMethodNotAllowed, "POST only")
 		return false
 	}
-	host := r.Host
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	host = strings.Trim(host, "[]")
 	// A request that presented the access token, or whose Host is listed in
-	// -allowed-hosts, already passed the rebinding check in guard; the Origin
-	// check below still applies to it.
-	if !hostTrusted(r) && host != "localhost" && net.ParseIP(host) == nil {
+	// -allowed-hosts, already passed the rebinding check in guard; otherwise
+	// the Host must be one guard accepts on its own (a localhost name such as
+	// app.localhost or "localhost.", or an IP literal). The Origin check below
+	// still applies to every request.
+	if !hostTrusted(r) && !hostAllowed(r.Host) {
 		fail(w, http.StatusForbidden, "open px0 by IP address or localhost to set up language servers")
 		return false
 	}

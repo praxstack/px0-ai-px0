@@ -255,3 +255,28 @@ func TestSettingsQueryTokenNotPersisted(t *testing.T) {
 		t.Fatal("access token was persisted into settings.json")
 	}
 }
+
+// guard admits localhost aliases (app.localhost, "localhost."), so localPost
+// must too; a non-local name is still refused without a token or allow-list.
+func TestLocalhostAliasPost(t *testing.T) {
+	s, _ := newTestServer(t)
+	mustSecure(t, s, AccessConfig{BindHost: "127.0.0.1", Port: 7777})
+	for host, want := range map[string]int{
+		"app.localhost:7777": http.StatusOK,
+		"localhost.:7777":    http.StatusOK,
+		"LOCALHOST:7777":     http.StatusOK,
+		"[::1]:7777":         http.StatusOK,
+		"evil.example:7777":  http.StatusForbidden,
+	} {
+		rec := doReq(s, "POST", "/api/session", host, map[string]string{"Origin": "http://" + host}, "{}")
+		if rec.Code != want {
+			t.Errorf("POST via Host %q: got %d (%s), want %d", host, rec.Code, rec.Body.String(), want)
+		}
+	}
+	// Without Secure (embedders) guard is off, so localPost alone refuses the
+	// rebinding name.
+	plain, _ := newTestServer(t)
+	if rec := doReq(plain, "POST", "/api/session", "evil.example", map[string]string{"Origin": "http://evil.example"}, "{}"); rec.Code != http.StatusForbidden {
+		t.Errorf("unguarded POST via foreign Host: got %d, want 403", rec.Code)
+	}
+}
