@@ -307,3 +307,45 @@ func TestSuppliedTokenIsCookieSafe(t *testing.T) {
 		t.Fatalf("request with the cookie: got %d, want 200", rec.Code)
 	}
 }
+
+func TestBasePathRedirectsReachableWithToken(t *testing.T) {
+	s, _ := newTestServer(t)
+	s.SetBasePath("/rev")
+	tok := mustSecure(t, s, AccessConfig{BindHost: "0.0.0.0", Port: 7777})
+	const host = "10.0.0.5:7777"
+	nav := map[string]string{"Sec-Fetch-Mode": "navigate"}
+
+	// The bare base path keeps the token on its way to /rev/, where the
+	// cookie (scoped to /rev/) is set.
+	rec := doReq(s, "GET", "/rev?token="+tok, host, nav, "")
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/rev/?token="+tok {
+		t.Fatalf("GET /rev?token=: got %d Location=%q, want 302 to /rev/?token=…", rec.Code, rec.Header().Get("Location"))
+	}
+	rec = doReq(s, "GET", "/rev/?token="+tok, host, nav, "")
+	if c := rec.Result().Cookies(); rec.Code != http.StatusOK || len(c) != 1 || c[0].Path != "/rev/" {
+		t.Fatalf("GET /rev/?token=: got %d cookies %v, want landing page with a /rev/ cookie", rec.Code, c)
+	}
+	if !strings.Contains(rec.Body.String(), `location.replace("./")`) {
+		t.Errorf("landing page at /rev/ does not go to ./: %s", rec.Body.String())
+	}
+
+	// The browser sends no /rev/-scoped cookie to /rev or /; both still
+	// reach the base path instead of failing with 401.
+	for _, p := range []string{"/rev", "/"} {
+		if rec := doReq(s, "GET", p, host, nav, ""); rec.Code != http.StatusFound || rec.Header().Get("Location") != "/rev/" {
+			t.Errorf("GET %s without cookie: got %d Location=%q, want 302 to /rev/", p, rec.Code, rec.Header().Get("Location"))
+		}
+	}
+	// Everything else still needs the token.
+	for _, p := range []string{"/rev/", "/rev/api/meta", "/other", "/rev-x"} {
+		if rec := doReq(s, "GET", p, host, nil, ""); rec.Code != http.StatusUnauthorized {
+			t.Errorf("GET %s without token: got %d, want 401", p, rec.Code)
+		}
+	}
+
+	root, _ := newTestServer(t)
+	mustSecure(t, root, AccessConfig{BindHost: "0.0.0.0", Port: 7777})
+	if rec := doReq(root, "GET", "/", host, nil, ""); rec.Code != http.StatusUnauthorized {
+		t.Errorf("root deployment GET / without token: got %d, want 401", rec.Code)
+	}
+}

@@ -259,6 +259,23 @@ func writeTokenLanding(w http.ResponseWriter, loc string) {
 		nonce, js, html.EscapeString(loc))
 }
 
+// baseRedirect returns the base path for a request to the bare base path
+// ("/rev") or, when a base path is set, the root ("/"): the paths the mux only
+// redirects to the base path. guard answers them before the token check because
+// the cookie is scoped to the base path and the browser does not send it there.
+// The query is kept so a ?token= still reaches the base path, where the token
+// landing page sets the cookie and strips it.
+func (s *Server) baseRedirect(u *url.URL) (string, bool) {
+	bp := s.BasePath()
+	if bp == "/" || (u.Path != "/" && u.Path != strings.TrimSuffix(bp, "/")) {
+		return "", false
+	}
+	if u.RawQuery != "" {
+		return bp + "?" + u.RawQuery, true
+	}
+	return bp, true
+}
+
 // redactTokenURI hides a ?token= value in a request URI before it is logged.
 func redactTokenURI(uri string) string {
 	u, err := url.ParseRequestURI(uri)
@@ -281,6 +298,10 @@ func redactTokenURI(uri string) string {
 // literal, or a name listed in -allowed-hosts.
 func (s *Server) guard(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
 	if s.accessToken != "" {
+		if loc, ok := s.baseRedirect(r.URL); ok {
+			http.Redirect(w, r, loc, http.StatusFound)
+			return r, false
+		}
 		ok, viaQuery := s.tokenOK(r)
 		if !ok {
 			http.Error(w, "unauthorized: open the URL printed by px0 (it carries an access token)", http.StatusUnauthorized)
