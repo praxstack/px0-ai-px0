@@ -182,14 +182,42 @@ func (s *Server) tokenCookieName() string {
 // from matching /rev-10/). Path is not a security boundary: any page on the
 // same origin can request px0's paths and the browser attaches this cookie, so
 // instances that must be isolated from other apps need their own hostname.
-func (s *Server) tokenCookie() *http.Cookie {
+//
+// It is Secure when the browser reached px0 over HTTPS, so a later plain-HTTP
+// request to the same hostname does not carry it.
+func (s *Server) tokenCookie(r *http.Request) *http.Cookie {
 	return &http.Cookie{
 		Name:     s.tokenCookieName(),
 		Value:    s.accessToken,
 		Path:     s.BasePath(),
+		Secure:   requestIsHTTPS(r),
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
 	}
+}
+
+// requestIsHTTPS reports whether the browser used HTTPS: px0 terminated TLS
+// itself, or a TLS-terminating proxy says so in X-Forwarded-Proto or Forwarded
+// (the first, client-facing hop). The header is only used to add Secure to the
+// cookie, which a client sending it falsely can only do to its own cookie.
+func requestIsHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if v := r.Header.Get("X-Forwarded-Proto"); v != "" {
+		first, _, _ := strings.Cut(v, ",")
+		return strings.EqualFold(strings.TrimSpace(first), "https")
+	}
+	if v := r.Header.Get("Forwarded"); v != "" {
+		first, _, _ := strings.Cut(v, ",")
+		for _, pair := range strings.Split(first, ";") {
+			k, val, ok := strings.Cut(strings.TrimSpace(pair), "=")
+			if ok && strings.EqualFold(k, "proto") {
+				return strings.EqualFold(strings.Trim(val, `"`), "https")
+			}
+		}
+	}
+	return false
 }
 
 func tokenEqual(a, b string) bool {
@@ -309,7 +337,7 @@ func (s *Server) guard(w http.ResponseWriter, r *http.Request) (*http.Request, b
 			return r, false
 		}
 		if viaQuery {
-			http.SetCookie(w, s.tokenCookie())
+			http.SetCookie(w, s.tokenCookie(r))
 			// A browser navigation now has the cookie: drop the token from the
 			// address bar so it does not linger in history or copied links.
 			if r.Method == http.MethodGet && r.Header.Get("Sec-Fetch-Mode") == "navigate" {

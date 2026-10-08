@@ -349,3 +349,34 @@ func TestBasePathRedirectsReachableWithToken(t *testing.T) {
 		t.Errorf("root deployment GET / without token: got %d, want 401", rec.Code)
 	}
 }
+
+// Behind a TLS-terminating proxy the token cookie must be Secure, so a later
+// plain-HTTP request to the same hostname does not carry it. Over plain HTTP
+// it cannot be Secure (the browser would drop it).
+func TestTokenCookieSecureOverHTTPS(t *testing.T) {
+	s, _ := newTestServer(t)
+	tok := mustSecure(t, s, AccessConfig{BindHost: "0.0.0.0", Port: 7777})
+	cookie := func(hdr map[string]string) *http.Cookie {
+		t.Helper()
+		c := doReq(s, "GET", "/api/meta?token="+tok, "px0.example.com", hdr, "").Result().Cookies()
+		if len(c) != 1 {
+			t.Fatalf("want one cookie, got %v", c)
+		}
+		return c[0]
+	}
+	if c := cookie(nil); c.Secure {
+		t.Errorf("plain HTTP: cookie is Secure")
+	}
+	for _, hdr := range []map[string]string{
+		{"X-Forwarded-Proto": "https"},
+		{"X-Forwarded-Proto": "HTTPS, http"},
+		{"Forwarded": `for=192.0.2.1;proto=https;host=px0.example.com`},
+	} {
+		if c := cookie(hdr); !c.Secure {
+			t.Errorf("%v: cookie not Secure", hdr)
+		}
+	}
+	if c := cookie(map[string]string{"X-Forwarded-Proto": "http"}); c.Secure {
+		t.Errorf("X-Forwarded-Proto http: cookie is Secure")
+	}
+}
