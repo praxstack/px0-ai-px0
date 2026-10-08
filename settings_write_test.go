@@ -183,3 +183,35 @@ func TestRawViewMasksEscapedTokenKey(t *testing.T) {
 		t.Fatalf("github.token after repair = %v, want the stored token", got)
 	}
 }
+
+// A dotfile manager can link settings.json before its target exists; the
+// first save must create the target, not replace the link.
+func TestDanglingSettingsSymlinkWrittenThrough(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	dotfiles := filepath.Join(t.TempDir(), "dotfiles")
+	if err := os.MkdirAll(dotfiles, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := settingsPath()
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Relative link through a second link, both resolved from their own directory.
+	if err := os.Symlink(filepath.Join(dotfiles, "hop.json"), p); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := os.Symlink("settings.json", filepath.Join(dotfiles, "hop.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := updateSettingsMap(map[string]any{"editor.tabSize": 3}); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(p); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("settings.json symlink was replaced by a regular file (err=%v)", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dotfiles, "settings.json"))
+	if err != nil || !strings.Contains(string(data), `"editor.tabSize": 3`) {
+		t.Fatalf("link target not created: %s (err=%v)", data, err)
+	}
+}

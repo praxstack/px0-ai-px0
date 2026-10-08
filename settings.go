@@ -819,11 +819,33 @@ func writeRawMapLocked(p string, raw map[string]any) error {
 	if err != nil {
 		return err
 	}
-	target := p
+	return writeFileAtomic(symlinkTarget(p), append(data, '\n'), p+".bak")
+}
+
+// symlinkTarget returns the file a write to p should replace so that a symlink
+// at p survives the temp-file rename: the link's final target, even when that
+// target does not exist yet (a dotfile manager's link before the first save).
+// A p that is not a symlink is returned unchanged.
+func symlinkTarget(p string) string {
 	if resolved, err := filepath.EvalSymlinks(p); err == nil {
-		target = resolved
+		return resolved
 	}
-	return writeFileAtomic(target, append(data, '\n'), p+".bak")
+	cur := p
+	for range 40 { // the same hop limit as the kernel's ELOOP
+		fi, err := os.Lstat(cur)
+		if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			return cur
+		}
+		dest, err := os.Readlink(cur)
+		if err != nil {
+			return cur
+		}
+		if !filepath.IsAbs(dest) {
+			dest = filepath.Join(filepath.Dir(cur), dest)
+		}
+		cur = dest
+	}
+	return p
 }
 
 // tightenSettingsPerms narrows an existing px0 config directory to 0700 and
