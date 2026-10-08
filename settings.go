@@ -497,7 +497,41 @@ func readSettingsLocked() settings {
 // Writing it back leaves the stored secret untouched.
 const maskedSecret = "********"
 
-var githubTokenRe = regexp.MustCompile(`("github\.token"\s*:\s*)"(?:[^"\\]|\\.)*"`)
+var githubTokenRe = regexp.MustCompile(`("github\.token"\s*:\s*)("(?:[^"\\]|\\.)*")`)
+
+// storedGitHubToken returns the github.token in settings.json for a save that
+// echoed maskedSecret back. A file that does not parse is the raw editor's
+// repair case: its token was masked with githubTokenRe, so it is recovered the
+// same way. When that is not possible (no unique string value) it is an error
+// rather than a silent loss of the token.
+func storedGitHubToken() (tok any, ok bool, err error) {
+	m, err := readSettingsRawMapStrict()
+	if err == nil {
+		tok, ok = m["github.token"]
+		return tok, ok, nil
+	}
+	data, rerr := os.ReadFile(settingsPath())
+	if rerr != nil {
+		return nil, false, rerr
+	}
+	values := map[string]bool{}
+	for _, mm := range githubTokenRe.FindAllSubmatch(data, -1) {
+		var v string
+		if json.Unmarshal(mm[2], &v) != nil {
+			values = nil
+			break
+		}
+		values[v] = true
+	}
+	if len(values) == 1 {
+		for v := range values {
+			if v != maskedSecret {
+				return v, true, nil
+			}
+		}
+	}
+	return nil, false, errors.New("cannot recover the stored github.token from the invalid settings.json; enter the token again instead of " + maskedSecret)
+}
 
 // readMergedSettingsMap returns all settings, overlaying stored settings onto defaults.
 func readMergedSettingsMap() map[string]any {
@@ -719,7 +753,11 @@ func saveRawSettingsJSON(rawJSON []byte) error {
 	defer settingsMu.Unlock()
 
 	if m["github.token"] == maskedSecret {
-		if old, ok := readSettingsRawMap()["github.token"]; ok {
+		old, ok, err := storedGitHubToken()
+		if err != nil {
+			return err
+		}
+		if ok {
 			m["github.token"] = old
 		} else {
 			delete(m, "github.token")

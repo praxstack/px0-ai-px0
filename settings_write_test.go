@@ -126,3 +126,32 @@ func TestSymlinkedSettingsWrittenThrough(t *testing.T) {
 		t.Errorf("dotfiles dir gained files: %v", names)
 	}
 }
+
+// The raw editor masks the token of an unparsable settings.json with
+// githubTokenRe; saving the repaired text with the mask echoed back must keep
+// the stored token, not drop it because the old file did not parse.
+func TestRawRepairOfInvalidSettingsKeepsMaskedToken(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	p := settingsPath()
+	os.MkdirAll(filepath.Dir(p), 0o700)
+	os.WriteFile(p, []byte(`{"github.token": "ghp_keep\"me", "editor.tabSize": 2,}`), 0o600)
+
+	shown := readRawSettingsJSON()
+	if strings.Contains(shown, "ghp_keep") || !strings.Contains(shown, maskedSecret) {
+		t.Fatalf("raw view did not mask the token: %q", shown)
+	}
+	fixed := strings.Replace(shown, ",}", "}", 1)
+	if err := saveRawSettingsJSON([]byte(fixed)); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSettingsRawMap()["github.token"]; got != `ghp_keep"me` {
+		t.Fatalf("github.token after repair = %v, want the stored token", got)
+	}
+
+	// No recoverable token: refuse instead of silently dropping it.
+	os.WriteFile(p, []byte(`{"github.token": 5, "editor.tabSize": 2,}`), 0o600)
+	if err := saveRawSettingsJSON([]byte(`{"github.token":"` + maskedSecret + `"}`)); err == nil {
+		t.Fatal("masked save over an unrecoverable token: want error")
+	}
+}
