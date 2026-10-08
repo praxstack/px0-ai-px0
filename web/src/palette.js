@@ -161,6 +161,7 @@ export const refreshPalette = debounce(async () => {
     let j;
     try { j = await api('/api/find', { q, limit: 120 }); } catch { return; }
     pal.items = j.results.map(r => {
+      // r.pos holds UTF-16 indices into r.path, the same units as .length/.slice.
       const cut = r.path.length - r.name.length;
       return {
         kind: 'file', path: r.path,

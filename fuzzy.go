@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"unicode"
+	"unicode/utf16"
 	"unicode/utf8"
 )
 
@@ -13,7 +14,7 @@ import (
 type FuzzyResult struct {
 	Path  string `json:"path"` // Workspace-relative path to the matched file
 	Name  string `json:"name"` // Basename of the file
-	Pos   []int  `json:"pos"`  // Byte offsets in Path that matched, used by frontend for highlight badges
+	Pos   []int  `json:"pos"`  // Matched characters as UTF-16 indices into Path (JavaScript string indices), for the frontend highlights
 	score int    // Computed match quality score (higher is better)
 }
 
@@ -170,6 +171,46 @@ func newFileEntry(rel, name string, size int64) FileEntry {
 	return e
 }
 
+// utf16Positions turns sorted byte offsets in s into the UTF-16 code unit
+// indices of the characters they fall in, which is how the browser indexes
+// strings. Every unit of a matched character is listed, so a surrogate pair is
+// never split by a highlight. An invalid byte counts as one unit, as the JSON
+// encoder sends it as U+FFFD. For ASCII s the offsets are already indices.
+func utf16Positions(s string, pos []int) []int {
+	if len(pos) == 0 {
+		return pos
+	}
+	i := 0
+	for i < len(s) && s[i] < utf8.RuneSelf {
+		i++
+	}
+	if i == len(s) {
+		return pos
+	}
+	out := make([]int, 0, len(pos)+2)
+	k, u := 0, 0
+	for b := 0; b < len(s) && k < len(pos); {
+		r, size := utf8.DecodeRuneInString(s[b:])
+		n := 1
+		if !(r == utf8.RuneError && size == 1) {
+			n = utf16.RuneLen(r)
+		}
+		hit := false
+		for k < len(pos) && pos[k] < b+size {
+			hit = hit || pos[k] >= b
+			k++
+		}
+		if hit {
+			for j := 0; j < n; j++ {
+				out = append(out, u+j)
+			}
+		}
+		b += size
+		u += n
+	}
+	return out
+}
+
 // FuzzyFind ranks every indexed path against query and returns the best limit.
 func FuzzyFind(files []FileEntry, query string, limit int) []FuzzyResult {
 	origQ := strings.ReplaceAll(strings.TrimSpace(query), " ", "")
@@ -211,6 +252,7 @@ func FuzzyFind(files []FileEntry, query string, limit int) []FuzzyResult {
 				}
 				cp := make([]int, len(pos))
 				copy(cp, pos)
+				cp = utf16Positions(files[i].Path, cp)
 				local = append(local, FuzzyResult{Path: files[i].Path, Name: files[i].Name, Pos: cp, score: s})
 			}
 			parts[w] = local
