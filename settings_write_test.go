@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -57,5 +58,71 @@ func TestInvalidSettingsNotWipedByWrite(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(p + ".bak"); string(b) != string(bad) {
 		t.Fatalf("backup = %q", b)
+	}
+}
+
+func TestExistingSettingsPermsTightened(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	p := settingsPath()
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.Chmod(filepath.Dir(p), 0o755)
+	for _, f := range []string{p, p + ".bak"} {
+		if err := os.WriteFile(f, []byte(`{"github.token":"ghp_x"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		os.Chmod(f, 0o644)
+	}
+	tightenSettingsPerms()
+	if fi, _ := os.Stat(filepath.Dir(p)); fi.Mode().Perm() != 0o700 {
+		t.Errorf("existing settings dir mode = %v, want 0700", fi.Mode().Perm())
+	}
+	for _, f := range []string{p, p + ".bak"} {
+		if fi, _ := os.Stat(f); fi.Mode().Perm() != 0o600 {
+			t.Errorf("%s mode = %v, want 0600", filepath.Base(f), fi.Mode().Perm())
+		}
+	}
+}
+
+func TestSymlinkedSettingsWrittenThrough(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	dotfiles := filepath.Join(t.TempDir(), "dotfiles")
+	if err := os.MkdirAll(dotfiles, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	real := filepath.Join(dotfiles, "settings.json")
+	if err := os.WriteFile(real, []byte(`{"editor.tabSize":2}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := settingsPath()
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, p); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := updateSettingsMap(map[string]any{"editor.tabSize": 5}); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Lstat(p); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("settings.json symlink was replaced by a regular file (err=%v)", err)
+	}
+	data, _ := os.ReadFile(real)
+	if !strings.Contains(string(data), `"editor.tabSize": 5`) {
+		t.Fatalf("link target not updated: %s", data)
+	}
+	if _, err := os.Stat(p + ".bak"); err != nil {
+		t.Errorf(".bak not kept next to the link: %v", err)
+	}
+	ents, _ := os.ReadDir(dotfiles)
+	if len(ents) != 1 {
+		var names []string
+		for _, e := range ents {
+			names = append(names, e.Name())
+		}
+		t.Errorf("dotfiles dir gained files: %v", names)
 	}
 }

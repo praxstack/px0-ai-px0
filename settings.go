@@ -493,13 +493,13 @@ func readSettingsLocked() settings {
 	return s
 }
 
-// readMergedSettingsMap returns all settings, overlaying stored settings onto defaults.
 // maskedSecret stands in for secret values in anything sent to the browser.
 // Writing it back leaves the stored secret untouched.
 const maskedSecret = "********"
 
 var githubTokenRe = regexp.MustCompile(`("github\.token"\s*:\s*)"(?:[^"\\]|\\.)*"`)
 
+// readMergedSettingsMap returns all settings, overlaying stored settings onto defaults.
 func readMergedSettingsMap() map[string]any {
 	settingsMu.Lock()
 	defer settingsMu.Unlock()
@@ -739,6 +739,10 @@ func saveRawSettingsJSON(rawJSON []byte) error {
 // writeRawMapLocked replaces settings.json atomically (temp file in the same
 // directory, then rename) with mode 0600 in a 0700 directory, because the file
 // can hold a GitHub token. The previous contents are kept as settings.json.bak.
+//
+// A settings.json that is a symlink (stow, chezmoi in symlink mode) is written
+// through: the link's target is replaced, so the link itself survives. The
+// .bak stays next to the link, outside the dotfiles tree.
 func writeRawMapLocked(p string, raw map[string]any) error {
 	dir := filepath.Dir(p)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -748,18 +752,41 @@ func writeRawMapLocked(p string, raw map[string]any) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(p, append(data, '\n'), true)
+	target := p
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		target = resolved
+	}
+	return writeFileAtomic(target, append(data, '\n'), p+".bak")
+}
+
+// tightenSettingsPerms narrows an existing px0 config directory to 0700 and
+// settings.json / settings.json.bak to 0600. Earlier versions created them
+// 0755 / 0644, and the file can hold a GitHub token; without this they would
+// stay readable by other users until the next settings write. Best effort.
+func tightenSettingsPerms() {
+	p := settingsPath()
+	if p == "" {
+		return
+	}
+	if fi, err := os.Lstat(filepath.Dir(p)); err == nil && fi.IsDir() && fi.Mode().Perm()&0o077 != 0 {
+		_ = os.Chmod(filepath.Dir(p), 0o700)
+	}
+	for _, f := range []string{p, p + ".bak"} {
+		if fi, err := os.Stat(f); err == nil && fi.Mode().IsRegular() && fi.Mode().Perm()&0o077 != 0 {
+			_ = os.Chmod(f, 0o600)
+		}
+	}
 }
 
 // writeFileAtomic writes data to p via a temp file and rename, with mode 0600.
-// When backup is set, a non-empty existing file is first copied to p+".bak".
-func writeFileAtomic(p string, data []byte, backup bool) error {
-	if backup {
+// When backupPath is non-empty, a non-empty existing file is first copied there.
+func writeFileAtomic(p string, data []byte, backupPath string) error {
+	if backupPath != "" {
 		if old, err := os.ReadFile(p); err == nil && len(bytes.TrimSpace(old)) > 0 {
-			if err := os.WriteFile(p+".bak", old, 0o600); err != nil {
+			if err := os.WriteFile(backupPath, old, 0o600); err != nil {
 				return err
 			}
-			_ = os.Chmod(p+".bak", 0o600)
+			_ = os.Chmod(backupPath, 0o600)
 		}
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(p), filepath.Base(p)+".tmp-*")

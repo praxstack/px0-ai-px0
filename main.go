@@ -70,6 +70,7 @@ func main() {
 	if *noGit {
 		gitDisabled = true
 	}
+	tightenSettingsPerms()
 
 	if *showVer || *showVerShort || (flag.NArg() == 1 && flag.Arg(0) == "version") {
 		fmt.Printf("px0 %s (%s/%s)\n", version, runtime.GOOS, runtime.GOARCH)

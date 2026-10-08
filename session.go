@@ -118,7 +118,7 @@ func (sm *sessionManager) Update(fn func(*WorkspaceSession)) WorkspaceSession {
 	if sm.path != "" {
 		if err := os.MkdirAll(filepath.Dir(sm.path), 0o700); err == nil {
 			if b, err := json.MarshalIndent(sm.data, "", "  "); err == nil {
-				_ = writeFileAtomic(sm.path, append(b, '\n'), false)
+				_ = writeFileAtomic(sm.path, append(b, '\n'), "")
 			}
 		}
 	}
