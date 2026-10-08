@@ -21,7 +21,7 @@ const minTokenLen = 16
 // -allowed-hosts / PX0_ALLOWED_HOSTS.
 type AccessConfig struct {
 	BindHost string // address px0 listens on
-	Port     int    // listen port; scopes the cookie name so instances on one host do not collide
+	Port     int    // listen port; part of the cookie name so instances on one host do not collide (not an isolation boundary)
 
 	// Token is an operator-supplied access token. When set it is required on
 	// every request, whatever the bind. When empty, a non-loopback bind
@@ -156,6 +156,22 @@ func (s *Server) tokenCookieName() string {
 	return "px0_token"
 }
 
+// tokenCookie is the access-token cookie set after a ?token= request. Its Path
+// is the configured base path: browsers do not isolate cookies by port, so the
+// per-port name only avoids collisions between instances; the Path is what
+// keeps the token away from other apps under the same hostname (the trailing
+// slash keeps /rev-1/ from matching /rev-10/). A px0 served at "/" shares the
+// whole hostname, so give it a hostname of its own when other apps run there.
+func (s *Server) tokenCookie() *http.Cookie {
+	return &http.Cookie{
+		Name:     s.tokenCookieName(),
+		Value:    s.accessToken,
+		Path:     s.BasePath(),
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	}
+}
+
 func tokenEqual(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
@@ -231,7 +247,7 @@ func (s *Server) guard(w http.ResponseWriter, r *http.Request) (*http.Request, b
 			return r, false
 		}
 		if viaQuery {
-			http.SetCookie(w, &http.Cookie{Name: s.tokenCookieName(), Value: s.accessToken, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode})
+			http.SetCookie(w, s.tokenCookie())
 			// A browser navigation now has the cookie: drop the token from the
 			// address bar so it does not linger in history or copied links.
 			if r.Method == http.MethodGet && r.Header.Get("Sec-Fetch-Mode") == "navigate" {

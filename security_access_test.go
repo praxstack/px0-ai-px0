@@ -129,6 +129,46 @@ func TestTokenCookieNameIsPerPort(t *testing.T) {
 	}
 }
 
+// Cookies are not isolated by port, so the cookie name alone does not keep the
+// token away from other services on the same hostname. The cookie Path must be
+// the configured base path, so apps beside a -base-path deployment never get it
+// and two deployments on one host and port do not overwrite each other.
+func TestTokenCookieScopedToBasePath(t *testing.T) {
+	cookieFor := func(s *Server, path, tok string) *http.Cookie {
+		t.Helper()
+		c := doReq(s, "GET", path+"?token="+tok, "10.0.0.5:7777", nil, "").Result().Cookies()
+		if len(c) != 1 {
+			t.Fatalf("GET %s: want one cookie, got %v", path, c)
+		}
+		return c[0]
+	}
+
+	root, _ := newTestServer(t)
+	tok := mustSecure(t, root, AccessConfig{BindHost: "0.0.0.0", Port: 7777})
+	if c := cookieFor(root, "/api/meta", tok); c.Path != "/" || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode {
+		t.Errorf("root deployment cookie = %+v, want Path=/ HttpOnly SameSite=Strict", c)
+	}
+
+	a, _ := newTestServer(t)
+	a.SetBasePath("/rev-1")
+	ta := mustSecure(t, a, AccessConfig{BindHost: "0.0.0.0", Port: 7777})
+	ca := cookieFor(a, "/rev-1/api/meta", ta)
+	if ca.Path != "/rev-1/" || !ca.HttpOnly || ca.SameSite != http.SameSiteStrictMode {
+		t.Errorf("base-path cookie = %+v, want Path=/rev-1/ HttpOnly SameSite=Strict", ca)
+	}
+
+	b, _ := newTestServer(t)
+	b.SetBasePath("/rev-10/")
+	tb := mustSecure(t, b, AccessConfig{BindHost: "0.0.0.0", Port: 7777})
+	cb := cookieFor(b, "/rev-10/api/meta", tb)
+	if cb.Path == ca.Path {
+		t.Errorf("deployments at /rev-1/ and /rev-10/ share cookie path %q", ca.Path)
+	}
+	if strings.HasPrefix("/rev-10/", ca.Path) {
+		t.Errorf("cookie path %q of /rev-1/ also matches /rev-10/", ca.Path)
+	}
+}
+
 func TestTokenStrippedFromNavigationURL(t *testing.T) {
 	s, _ := newTestServer(t)
 	tok := mustSecure(t, s, AccessConfig{BindHost: "0.0.0.0", Port: 7777})

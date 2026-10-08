@@ -70,7 +70,7 @@ type Server struct {
 	accessToken  string   // when non-empty, required on every request (see Secure)
 	hostGuard    bool     // reject requests whose Host is not localhost, an IP or an allowed host (DNS rebinding)
 	allowedHosts []string // extra Host names accepted by hostGuard (-allowed-hosts)
-	cookieName   string   // access-token cookie name, scoped by port
+	cookieName   string   // access-token cookie name; per port to avoid collisions, Path (the base path) does the scoping
 
 	lastReq atomic.Int64 // unix nanos of the most recent request
 }
