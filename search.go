@@ -408,8 +408,5 @@ func unindexedTarget(root string, files []FileEntry, glob string) (FileEntry, bo
 		return FileEntry{}, false
 	}
 	name := rel[strings.LastIndexByte(rel, '/')+1:]
-	return FileEntry{
-		Path: rel, Name: name, Size: st.Size(),
-		lower: foldLower(rel), nameStart: len(rel) - len(name),
-	}, true
+	return newFileEntry(rel, name, st.Size()), true
 }

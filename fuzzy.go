@@ -56,6 +56,21 @@ func fuzzyScore(q, origQ string, e *FileEntry, pos []int) (int, []int, bool) {
 	for i, j := 0, len(pos)-1; i < j; i, j = i+1, j-1 {
 		pos[i], pos[j] = pos[j], pos[i]
 	}
+	lowerNameStart := e.nameStart
+	if e.lowerOff != nil {
+		// Map positions in the folded path back to byte offsets in Path. Bytes
+		// of one folded rune can map to the same Path byte; keep it once.
+		lowerNameStart = e.lowerNameStart
+		n := 0
+		for _, i := range pos {
+			o := int(e.lowerOff[i])
+			if n == 0 || o != pos[n-1] {
+				pos[n] = o
+				n++
+			}
+		}
+		pos = pos[:n]
+	}
 
 	score, prev := 0, -2
 	for k, i := range pos {
@@ -80,7 +95,7 @@ func fuzzyScore(q, origQ string, e *FileEntry, pos []int) (int, []int, bool) {
 	// Prefer the shallower, shorter of two otherwise-equal paths.
 	score -= len(p) / 8
 	score -= strings.Count(p, "/") * 2
-	if idx := strings.Index(e.lower[e.nameStart:], q); idx >= 0 {
+	if idx := strings.Index(e.lower[lowerNameStart:], q); idx >= 0 {
 		score += 40 // whole query appears verbatim in the basename
 		if idx == 0 {
 			score += 20
@@ -96,34 +111,63 @@ func min(a, b int) int {
 	return b
 }
 
-// foldLower lowercases s for fuzzy matching without changing its byte length,
-// so a byte offset in the result is the same offset in s. Each rune is
-// lowercased only when its lowercase form encodes to the same number of bytes
-// (É→é, Ü→ü, Ω→ω); a rune whose lowercase is longer or shorter (U+023A, U+0130)
-// and any invalid byte are kept as they are.
-func foldLower(s string) string {
+// foldPath lowercases s rune by rune for fuzzy matching. Every rune folds to
+// exactly one rune, but not always to one of the same UTF-8 length (U+023A
+// grows from 2 to 3 bytes, U+0130 shrinks from 2 to 1). While every rune keeps
+// its length the result is byte-aligned with s and off is nil; otherwise off[j]
+// is the byte offset in s that byte j of the result stands for, so match
+// positions can be mapped back to s. An invalid byte is kept as it is.
+func foldPath(s string) (string, []int32) {
 	i := 0
 	for i < len(s) && s[i] < utf8.RuneSelf {
 		i++
 	}
 	if i == len(s) {
-		return asciiLowerString(s)
+		return asciiLowerString(s), nil
 	}
-	b := make([]byte, 0, len(s))
+	b := make([]byte, 0, len(s)+8)
 	b = append(b, asciiLowerString(s[:i])...)
+	var off []int32
 	for i < len(s) {
 		r, size := utf8.DecodeRuneInString(s[i:])
-		if r != utf8.RuneError || size > 1 {
-			if l := unicode.ToLower(r); utf8.RuneLen(l) == size {
-				b = utf8.AppendRune(b, l)
-				i += size
-				continue
+		start := len(b)
+		if r == utf8.RuneError && size == 1 {
+			b = append(b, s[i])
+		} else {
+			b = utf8.AppendRune(b, unicode.ToLower(r))
+		}
+		n := len(b) - start
+		if n != size && off == nil {
+			off = make([]int32, start, cap(b))
+			for j := range off {
+				off[j] = int32(j) // every earlier rune kept its length
 			}
 		}
-		b = append(b, s[i:i+size]...)
+		if off != nil {
+			for j := 0; j < n; j++ {
+				off = append(off, int32(i+min(j, size-1)))
+			}
+		}
 		i += size
 	}
-	return string(b)
+	return string(b), off
+}
+
+// foldLower is foldPath without the offset map, for queries.
+func foldLower(s string) string {
+	l, _ := foldPath(s)
+	return l
+}
+
+// newFileEntry builds an index entry with its folded path cached.
+func newFileEntry(rel, name string, size int64) FileEntry {
+	lower, off := foldPath(rel)
+	e := FileEntry{Path: rel, Name: name, Size: size, lower: lower, lowerOff: off, nameStart: len(rel) - len(name)}
+	e.lowerNameStart = e.nameStart
+	if off != nil {
+		e.lowerNameStart = len(lower) - len(foldLower(name))
+	}
+	return e
 }
 
 // FuzzyFind ranks every indexed path against query and returns the best limit.

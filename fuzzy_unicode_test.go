@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,8 +51,8 @@ func TestFuzzyFindLowerChangesLength(t *testing.T) {
 	}
 }
 
-// Fuzzy find folds case for non-ASCII letters too, wherever folding keeps the
-// byte length (so match positions still index Path).
+// Fuzzy find folds case for non-ASCII letters too, and match positions still
+// index Path.
 func TestFuzzyFindFoldsUnicodeCase(t *testing.T) {
 	root := t.TempDir()
 	for _, n := range []string{"École.go", "Über.go", "Ωmega.go", "ȺȺzz.go", "plain.go"} {
@@ -75,6 +76,51 @@ func TestFuzzyFindFoldsUnicodeCase(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("query %q: %s not found in %v", q, want, res)
+		}
+	}
+}
+
+// Letters whose lowercase form has a different UTF-8 length (U+023A Ⱥ → U+2C65
+// ⱥ grows from 2 to 3 bytes; U+0130 İ → i shrinks from 2 to 1) still fold, and
+// match positions are mapped back to byte offsets in Path.
+func TestFuzzyFindFoldsLengthChangingCase(t *testing.T) {
+	root := t.TempDir()
+	for _, n := range []string{"ȺȺzz.go", "İİyy.go", "sub/ȺxİÉ.md", "plain.go"} {
+		p := filepath.Join(root, filepath.FromSlash(n))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ix := NewIndex(root)
+	ix.Build()
+	files := ix.Files()
+	cases := []struct {
+		q, want string
+		pos     []int
+	}{
+		{"ⱥⱥzz", "ȺȺzz.go", []int{0, 1, 2, 3, 4, 5}},
+		{"ȺȺZZ", "ȺȺzz.go", []int{0, 1, 2, 3, 4, 5}},
+		{"iiyy", "İİyy.go", []int{0, 2, 4, 5}},
+		{"İİyy", "İİyy.go", []int{0, 2, 4, 5}},
+		{"ⱥxié", "sub/ȺxİÉ.md", []int{4, 5, 6, 7, 9, 10}},
+	}
+	for _, c := range cases {
+		var got *FuzzyResult
+		for _, r := range FuzzyFind(files, c.q, 10) {
+			if r.Path == c.want {
+				got = &r
+				break
+			}
+		}
+		if got == nil {
+			t.Errorf("query %q: %s not found", c.q, c.want)
+			continue
+		}
+		if fmt.Sprint(got.Pos) != fmt.Sprint(c.pos) {
+			t.Errorf("query %q on %q: pos %v, want %v", c.q, got.Path, got.Pos, c.pos)
 		}
 	}
 }

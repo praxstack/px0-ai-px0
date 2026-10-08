@@ -20,6 +20,10 @@ type FileEntry struct {
 	Size      int64  `json:"size"` // File size in bytes
 	lower     string // Cached lowercase Path for fast case-insensitive matching
 	nameStart int    // Byte offset in Path where the basename begins
+	// lowerOff maps each byte of lower to a byte of Path; nil when they are
+	// byte-aligned (always for ASCII). lowerNameStart is nameStart in lower.
+	lowerOff       []int32
+	lowerNameStart int
 }
 
 // Node represents a file or directory entry in the hierarchical file tree view.
@@ -406,10 +410,7 @@ func (ix *Index) Build() {
 			}
 			kids = append(kids, Node{Name: name, Path: childRel, Size: info.Size(), Status: gs[childRel], Staged: staged[childRel], YourStatus: yourStatuses[childRel]})
 			mu.Lock()
-			files = append(files, FileEntry{
-				Path: childRel, Name: name, Size: info.Size(),
-				lower: foldLower(childRel), nameStart: len(childRel) - len(name),
-			})
+			files = append(files, newFileEntry(childRel, name, info.Size()))
 			mu.Unlock()
 		}
 		sortNodes(kids)
