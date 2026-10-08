@@ -69,6 +69,7 @@ When hosted behind reverse proxies or multi-tenant review platforms, px0 support
 - All routes below are prefixed with the base path (`/<base-path>/api/...`, `/<base-path>/static/...`).
 - `handleIndex` dynamically injects `<base href="/<base-path>/">` into `web/index.html`, allowing the frontend to resolve relative assets and API endpoints without domain-level assumptions.
 - Requests to `/<base-path>` without a trailing slash redirect to `/<base-path>/`, and root `/` redirects to the configured base path.
+- Every request first passes `Server.guard` (security.go): on a non-loopback bind, or when `-token` / `PX0_TOKEN` is set, it must carry the access token (query once, then the `px0_token_<port>` cookie, or `Authorization: Bearer`). Otherwise its `Host` must be `localhost`, an IP literal or an `-allowed-hosts` name. A gateway deployment that authenticates users itself runs with `-no-auth -allowed-hosts <public host>`.
 
 ### Endpoints Reference
 

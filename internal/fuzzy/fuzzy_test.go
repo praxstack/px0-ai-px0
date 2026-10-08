@@ -1,6 +1,7 @@
 package fuzzy
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -106,6 +107,69 @@ func TestIsBoundary(t *testing.T) {
 	for _, nb := range nonBoundaries {
 		if IsBoundary(nb) {
 			t.Errorf("expected byte %q not to be boundary", nb)
+		}
+	}
+}
+
+// Find over NewItem folds letters whose lowercase has a different UTF-8 length
+// (U+023A grows, U+0130 shrinks) without positions running past Path, and
+// reports positions as UTF-16 indices (an astral letter is two units).
+func TestFindFoldsUnicodeAndReportsUTF16(t *testing.T) {
+	t.Parallel()
+
+	astral := string(rune(0x10400))
+	items := []Item{
+		NewItem(strings.Repeat("Ⱥ", 12) + "zz.go"),
+		NewItem("İİyy.go"),
+		NewItem("sub/ȺxİÉ.md"),
+		NewItem("École.go"),
+		NewItem("d/" + astral + "x.go"),
+	}
+	cases := []struct{ q, want, pos string }{
+		{"ⱥⱥzz", "", ""}, // only checks bounds below
+		{"iiyy", "İİyy.go", "[0 1 2 3]"},
+		{"ⱥxié", "sub/ȺxİÉ.md", "[4 5 6 7]"},
+		{"école", "École.go", "[0 1 2 3 4]"},
+		{string(rune(0x10428)) + "x", "d/" + astral + "x.go", "[2 3 4]"},
+	}
+	for _, c := range cases {
+		res := Find(items, c.q, 10)
+		if len(res) == 0 {
+			t.Errorf("query %q: no results", c.q)
+			continue
+		}
+		for _, r := range res {
+			for _, p := range r.Pos {
+				if p < 0 || p >= len(r.Path) {
+					t.Fatalf("query %q: pos %d out of range for %q", c.q, p, r.Path)
+				}
+			}
+		}
+		if c.want != "" && (res[0].Path != c.want || fmt.Sprint(res[0].Pos) != c.pos) {
+			t.Errorf("query %q: got %q %v, want %q %s", c.q, res[0].Path, res[0].Pos, c.want, c.pos)
+		}
+	}
+}
+
+func TestUTF16Positions(t *testing.T) {
+	t.Parallel()
+
+	astral := string(rune(0x10400)) // 4 UTF-8 bytes, 2 UTF-16 units
+	cases := []struct {
+		name, s       string
+		bytePos, want []int
+	}{
+		{"ascii", "src/main.go", []int{0, 4, 9}, []int{0, 4, 9}},
+		{"2-byte", "é/xé.go", []int{0, 1, 3, 4}, []int{0, 2, 3}},
+		{"3-byte", "ⱥ中z.go", []int{0, 2, 3, 6}, []int{0, 1, 2}},
+		{"astral", "a" + astral + "b.go", []int{1, 2, 3, 4, 5}, []int{1, 2, 3}},
+		{"astral after BMP", "é" + astral + "中" + astral + "x", []int{2, 6, 9, 13}, []int{1, 2, 3, 4, 5, 6}},
+		{"invalid byte", "a\xffb", []int{1, 2}, []int{1, 2}},
+		{"none", "é.go", nil, nil},
+	}
+	for _, c := range cases {
+		if got := UTF16Positions(c.s, c.bytePos); fmt.Sprint(got) != fmt.Sprint(c.want) {
+			t.Errorf("%s: UTF16Positions(%q, %v) = %v, want %v", c.name, c.s, c.bytePos, got, c.want)
 		}
 	}
 }

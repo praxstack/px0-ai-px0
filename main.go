@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -39,7 +40,7 @@ func main() {
 		doUpdate     = flag.Bool("update", false, "check for and install latest version of px0")
 		noUpdate     = flag.Bool("no-update", false, "do not auto-update px0 on startup")
 		noColor      = flag.Bool("no-color", false, "disable colour output")
-		quiet        = flag.Bool("quiet", false, "suppress narration")
+		quiet        = flag.Bool("quiet", false, "suppress narration (a generated access token is still printed)")
 		verbose      = flag.Bool("verbose", false, "log startup steps, requests, searches, symbols, and agent prompts to terminal")
 		noTelemetry  = flag.Bool("no-telemetry", false, "disable anonymous usage telemetry")
 		agentCmd     = flag.String("agent", "", "pin the coding harness used for edits (claude, gemini, cursor-agent, agy, opencode, codex, aider, goose, or a command template containing {prompt}); detected and chosen in the UI when omitted")
@@ -47,6 +48,9 @@ func main() {
 		_            = flag.Bool("y", false, "answer yes to prompts (deprecated; PRs are always opened without prompt)")
 		_            = flag.Bool("yes", false, "answer yes to prompts (alias for -y)")
 		basePathFlag = flag.String("base-path", "", "base URL path prefix to serve endpoints and assets from (e.g. /rev-123/)")
+		tokenFlag    = flag.String("token", "", "access token required on every request, at least 16 printable ASCII characters, no spaces or the characters \" , ; \\ (default $PX0_TOKEN; a random one is generated on non-loopback binds when unset)")
+		noAuth       = flag.Bool("no-auth", false, "do not require an access token on a non-loopback bind; only for use behind a gateway that authenticates users")
+		allowedHosts = flag.String("allowed-hosts", "", "comma-separated Host names to accept besides localhost and IP addresses, e.g. a reverse proxy or tunnel hostname; *.example.com matches subdomains, * on its own accepts any (default $PX0_ALLOWED_HOSTS)")
 	)
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "px0 %s - a code navigator\n\nusage:\n  px0 [flags] [file or directory]\n  px0 [flags] <pr-url>\n\nflags:\n", version)
@@ -67,6 +71,7 @@ func main() {
 	if *noGit {
 		gitDisabled = true
 	}
+	tightenSettingsPerms()
 
 	if *showVer || *showVerShort || (flag.NArg() == 1 && flag.Arg(0) == "version") {
 		fmt.Printf("px0 %s (%s/%s)\n", version, runtime.GOOS, runtime.GOARCH)
@@ -156,6 +161,22 @@ func main() {
 
 	pxSrv := NewServer(ix, lsp, configuredBasePath)
 	pxSrv.tel = tel
+	access := AccessConfig{BindHost: *host, Token: *tokenFlag, NoAuth: *noAuth}
+	if access.Token == "" {
+		access.Token = os.Getenv("PX0_TOKEN")
+	}
+	if *allowedHosts != "" {
+		access.AllowedHosts = parseAllowedHosts(*allowedHosts)
+	} else {
+		access.AllowedHosts = parseAllowedHosts(os.Getenv("PX0_ALLOWED_HOSTS"))
+	}
+	if _, p, err := net.SplitHostPort(addr); err == nil {
+		access.Port, _ = strconv.Atoi(p)
+	}
+	accessToken, err := pxSrv.Secure(access)
+	if err != nil {
+		fatal(err)
+	}
 	if pr != nil {
 		pxSrv.SetPR(pr)
 	}
@@ -171,7 +192,7 @@ func main() {
 
 	srv := &http.Server{Handler: pxSrv}
 
-	url := viewerURL(addr, initialFile, initialLine, configuredBasePath)
+	url := withToken(viewerURL(addr, initialFile, initialLine, configuredBasePath), accessToken)
 	uiHeading("px0 "+version, nil, os.Stdout)
 	if pr != nil {
 		prTitle := fmt.Sprintf("#%d %s", pr.meta.Number, pr.meta.Title)
@@ -187,9 +208,10 @@ func main() {
 	uiKV("url", uiAccent(url, os.Stdout), 11, os.Stdout)
 	if *host == "0.0.0.0" {
 		for _, networkURL := range networkURLs(addr, initialFile, initialLine) {
-			uiKV("network", uiAccent(networkURL, os.Stdout), 11, os.Stdout)
+			uiKV("network", uiAccent(withToken(networkURL, accessToken), os.Stdout), 11, os.Stdout)
 		}
 	}
+	printAccess(os.Stdout, accessToken, access.Token == "", *noAuth, *host)
 	uiHint("ctrl-c to stop", os.Stdout)
 
 	if uiVerbose {
@@ -303,6 +325,21 @@ func main() {
 // If the target is inside a git repository, that repository root is used as the workspace root.
 // Otherwise, for relative paths within the current working directory, the working directory
 // is used. Standalone files fall back to their parent directory.
+// printAccess prints the access token, or a warning when -no-auth exposes the
+// workspace. A token px0 generated exists nowhere else, so it is printed even
+// under -quiet: without it nobody could open the server.
+func printAccess(w io.Writer, token string, generated, noAuth bool, bindHost string) {
+	if token != "" {
+		kv := uiKV
+		if generated {
+			kv = uiKVAlways
+		}
+		kv("token", token+uiDim("  (add ?token=… to any URL that reaches this px0)", w), 11, w)
+	} else if noAuth && !isLoopbackBind(bindHost) {
+		uiKV("access", paint("no access token (-no-auth): anyone who can reach this port can read the workspace", colorWarn, true, w), 11, w)
+	}
+}
+
 func resolveTarget(target string) (root, initialFile string, initialLine int, err error) {
 	cleanedTarget, line := splitTargetLine(target)
 	abs, err := filepath.Abs(cleanedTarget)

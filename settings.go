@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 )
 
@@ -65,7 +68,7 @@ type settingSchemaItem struct {
 	Min         *float64 `json:"min,omitempty"`
 	Max         *float64 `json:"max,omitempty"`
 	Step        *float64 `json:"step,omitempty"`
-	Secret      bool     `json:"secret,omitempty"` // render as a masked input; still returned in plaintext by /api/settings, same trust model as every other local setting
+	Secret      bool     `json:"secret,omitempty"` // render as a masked input; /api/settings returns maskedSecret in its place
 }
 
 func numPtr(v float64) *float64 { return &v }
@@ -401,6 +404,34 @@ func readSettingsRawMap() map[string]any {
 	return m
 }
 
+// readSettingsRawMapStrict is the read used before a write: a missing or empty
+// file is an empty map, but a file that exists and does not parse is an error,
+// so a typo in settings.json is never silently replaced by defaults.
+func readSettingsRawMapStrict() (map[string]any, error) {
+	p := settingsPath()
+	if p == "" {
+		return map[string]any{}, nil
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return map[string]any{}, nil
+		}
+		return nil, err
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return map[string]any{}, nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("%s is not valid JSON (fix or remove it; not overwriting): %w", p, err)
+	}
+	if m == nil {
+		m = map[string]any{}
+	}
+	return m, nil
+}
+
 // readSettings never fails: a missing or corrupt file simply means no choice
 // has been made yet, which is the same as a fresh install.
 func readSettings() settings {
@@ -462,6 +493,75 @@ func readSettingsLocked() settings {
 	return s
 }
 
+// maskedSecret stands in for secret values in anything sent to the browser.
+// Writing it back leaves the stored secret untouched.
+const maskedSecret = "********"
+
+// jsonStringPairRe matches a "key": "string" pair in JSON text. It is used on a
+// settings.json that does not parse, so it cannot rely on a decoder.
+var jsonStringPairRe = regexp.MustCompile(`("(?:[^"\\]|\\.)*")\s*:\s*("(?:[^"\\]|\\.)*")`)
+
+// githubTokenSpans returns the byte spans of the quoted string values in data
+// whose key decodes to github.token, however the key is escaped.
+func githubTokenSpans(data []byte) [][2]int {
+	var out [][2]int
+	for _, m := range jsonStringPairRe.FindAllSubmatchIndex(data, -1) {
+		var k string
+		if json.Unmarshal(data[m[2]:m[3]], &k) == nil && k == "github.token" {
+			out = append(out, [2]int{m[4], m[5]})
+		}
+	}
+	return out
+}
+
+// maskGitHubTokens replaces every github.token string value in data, which
+// need not be valid JSON, with maskedSecret.
+func maskGitHubTokens(data []byte) string {
+	var b bytes.Buffer
+	last := 0
+	for _, sp := range githubTokenSpans(data) {
+		b.Write(data[last:sp[0]])
+		b.WriteString(`"` + maskedSecret + `"`)
+		last = sp[1]
+	}
+	b.Write(data[last:])
+	return b.String()
+}
+
+// storedGitHubToken returns the github.token in settings.json for a save that
+// echoed maskedSecret back. A file that does not parse is the raw editor's
+// repair case: its token was masked with maskGitHubTokens, so it is recovered the
+// same way. When that is not possible (no unique string value) it is an error
+// rather than a silent loss of the token.
+func storedGitHubToken() (tok any, ok bool, err error) {
+	m, err := readSettingsRawMapStrict()
+	if err == nil {
+		tok, ok = m["github.token"]
+		return tok, ok, nil
+	}
+	data, rerr := os.ReadFile(settingsPath())
+	if rerr != nil {
+		return nil, false, rerr
+	}
+	values := map[string]bool{}
+	for _, sp := range githubTokenSpans(data) {
+		var v string
+		if json.Unmarshal(data[sp[0]:sp[1]], &v) != nil {
+			values = nil
+			break
+		}
+		values[v] = true
+	}
+	if len(values) == 1 {
+		for v := range values {
+			if v != maskedSecret {
+				return v, true, nil
+			}
+		}
+	}
+	return nil, false, errors.New("cannot recover the stored github.token from the invalid settings.json; enter the token again instead of " + maskedSecret)
+}
+
 // readMergedSettingsMap returns all settings, overlaying stored settings onto defaults.
 func readMergedSettingsMap() map[string]any {
 	settingsMu.Lock()
@@ -472,6 +572,9 @@ func readMergedSettingsMap() map[string]any {
 
 	for k, v := range raw {
 		res[k] = v
+	}
+	if t, ok := res["github.token"].(string); ok && t != "" {
+		res["github.token"] = maskedSecret
 	}
 
 	// Synchronize agent / agent.harness
@@ -531,12 +634,17 @@ func readRawSettingsJSON() string {
 	}
 	// Pretty format if possible
 	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err == nil {
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return maskGitHubTokens(data)
+	} else {
+		if t, ok := raw["github.token"].(string); ok && t != "" {
+			raw["github.token"] = maskedSecret
+		}
 		if formatted, err := json.MarshalIndent(raw, "", "  "); err == nil {
 			return string(formatted) + "\n"
 		}
 	}
-	return string(data)
+	return maskGitHubTokens(data)
 }
 
 // writeSettings saves the agent and models choices while preserving other settings.
@@ -548,7 +656,10 @@ func writeSettings(s settings) error {
 	settingsMu.Lock()
 	defer settingsMu.Unlock()
 
-	raw := readSettingsRawMap()
+	raw, err := readSettingsRawMapStrict()
+	if err != nil {
+		return err
+	}
 	if s.Agent != "" {
 		raw["agent"] = s.Agent
 		raw["agent.harness"] = s.Agent
@@ -577,8 +688,14 @@ func updateSettingsMap(updates map[string]any) error {
 	settingsMu.Lock()
 	defer settingsMu.Unlock()
 
-	raw := readSettingsRawMap()
+	raw, err := readSettingsRawMapStrict()
+	if err != nil {
+		return err
+	}
 	for k, v := range updates {
+		if k == "github.token" && v == maskedSecret {
+			continue // the browser echoed the mask back: keep the stored token
+		}
 		if v == nil {
 			delete(raw, k)
 		} else {
@@ -664,6 +781,18 @@ func saveRawSettingsJSON(rawJSON []byte) error {
 	settingsMu.Lock()
 	defer settingsMu.Unlock()
 
+	if m["github.token"] == maskedSecret {
+		old, ok, err := storedGitHubToken()
+		if err != nil {
+			return err
+		}
+		if ok {
+			m["github.token"] = old
+		} else {
+			delete(m, "github.token")
+		}
+	}
+
 	// Sync agent bridges if present
 	if ag, ok := m["agent"].(string); ok && ag != "" {
 		m["agent.harness"] = ag
@@ -674,13 +803,109 @@ func saveRawSettingsJSON(rawJSON []byte) error {
 	return writeRawMapLocked(p, m)
 }
 
+// writeRawMapLocked replaces settings.json atomically (temp file in the same
+// directory, then rename) with mode 0600 in a 0700 directory, because the file
+// can hold a GitHub token. The previous contents are kept as settings.json.bak.
+//
+// A settings.json that is a symlink (stow, chezmoi in symlink mode) is written
+// through: the link's target is replaced, so the link itself survives. The
+// .bak stays next to the link, outside the dotfiles tree.
 func writeRawMapLocked(p string, raw map[string]any) error {
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	dir := filepath.Dir(p)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p, append(data, '\n'), 0o644)
+	return writeFileAtomic(symlinkTarget(p), append(data, '\n'), p+".bak")
+}
+
+// symlinkTarget returns the file a write to p should replace so that a symlink
+// at p survives the temp-file rename: the link's final target, even when that
+// target does not exist yet (a dotfile manager's link before the first save).
+// A p that is not a symlink is returned unchanged.
+func symlinkTarget(p string) string {
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	cur := p
+	for range 40 { // the same hop limit as the kernel's ELOOP
+		fi, err := os.Lstat(cur)
+		if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			return cur
+		}
+		dest, err := os.Readlink(cur)
+		if err != nil {
+			return cur
+		}
+		if !filepath.IsAbs(dest) {
+			dest = filepath.Join(filepath.Dir(cur), dest)
+		}
+		cur = dest
+	}
+	return p
+}
+
+// tightenSettingsPerms narrows an existing px0 config directory to 0700 and
+// settings.json / settings.json.bak to 0600. Earlier versions created them
+// 0755 / 0644, and the file can hold a GitHub token; without this they would
+// stay readable by other users until the next settings write. Best effort.
+func tightenSettingsPerms() {
+	p := settingsPath()
+	if p == "" {
+		return
+	}
+	if fi, err := os.Lstat(filepath.Dir(p)); err == nil && fi.IsDir() && fi.Mode().Perm()&0o077 != 0 {
+		_ = os.Chmod(filepath.Dir(p), 0o700)
+	}
+	for _, f := range []string{p, p + ".bak"} {
+		if fi, err := os.Stat(f); err == nil && fi.Mode().IsRegular() && fi.Mode().Perm()&0o077 != 0 {
+			_ = os.Chmod(f, 0o600)
+		}
+	}
+}
+
+// writeFileAtomic writes data to p via a temp file and rename, with mode 0600.
+// When backupPath is non-empty, a non-empty existing file is first copied there.
+func writeFileAtomic(p string, data []byte, backupPath string) error {
+	if backupPath != "" {
+		if old, err := os.ReadFile(p); err == nil && len(bytes.TrimSpace(old)) > 0 {
+			if err := os.WriteFile(backupPath, old, 0o600); err != nil {
+				return err
+			}
+			_ = os.Chmod(backupPath, 0o600)
+		}
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(p), filepath.Base(p)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpName) }
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		cleanup()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Rename(tmpName, p); err != nil {
+		cleanup()
+		return err
+	}
+	return nil
 }

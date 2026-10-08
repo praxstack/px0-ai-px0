@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -88,6 +89,19 @@ func repoRelKey(info gitInfo, root string) func(string) (string, bool) {
 			return "", false // outside the served subtree
 		}
 		return p[len(prefix):], true
+	}
+}
+
+// px0 runs git status and diff in the background (the git watcher polls them)
+// while the user works in the same repository. Those reads refresh the index
+// opportunistically, which takes .git/index.lock for a moment, and a git
+// commit or add by the user that lands in that moment fails with
+// "index.lock: File exists". GIT_OPTIONAL_LOCKS=0 turns off only those optional
+// locks; a command that must write the index still takes the lock. Set it for
+// every git px0 starts unless the user chose a value.
+func init() {
+	if _, ok := os.LookupEnv("GIT_OPTIONAL_LOCKS"); !ok {
+		os.Setenv("GIT_OPTIONAL_LOCKS", "0")
 	}
 }
 

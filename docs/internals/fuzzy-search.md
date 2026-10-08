@@ -49,7 +49,7 @@ flowchart TD
 ### Step-by-Step Execution
 
 1. Pass 1 (Forward Scan): Evaluates whether every rune in query `q` exists sequentially in `e.lower`. Records the index `end` where the final rune was located. If the scan reaches the end of the path without exhausting the query, the path is immediately rejected ($O(\text{prefix})$ fast rejection).
-1. Pass 2 (Backward Scan from `end`): Starting from `end`, scans backward toward 0, matching query characters in reverse order. Because it starts from the earliest valid termination point and moves backward, it naturally converges on the tightest possible cluster of matching runes. Matched byte offsets are appended to a reusable slice `pos` and flipped in-place.
+1. Pass 2 (Backward Scan from `end`): Starting from `end`, scans backward toward 0, matching query characters in reverse order. Because it starts from the earliest valid termination point and moves backward, it naturally converges on the tightest possible cluster of matching runes. Matched byte offsets are appended to a reusable slice `pos` and flipped in-place. When case folding changed the path's byte length, they are first mapped back to `Path` through `lowerOff`. Before the result is sent, `utf16Positions` turns them into UTF-16 indices (JavaScript string indices), listing both halves of a surrogate pair, so the palette's highlights land on the matched characters for non-ASCII paths.
 
 ## 3. Weighted Scoring Matrix
 

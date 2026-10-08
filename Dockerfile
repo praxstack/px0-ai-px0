@@ -21,5 +21,9 @@ RUN apk --no-cache add ca-certificates git
 COPY --from=go-builder /bin/px0 /usr/local/bin/px0
 
 EXPOSE 7777
+# Binding 0.0.0.0 makes px0 require an access token. Pass -e PX0_TOKEN=<16+ chars>
+# to choose it (then open http://localhost:7777/?token=<it>), or read the
+# generated one from `docker logs`. Behind a gateway that authenticates users,
+# run it with: -no-auth -allowed-hosts <public host> /workspace
 ENTRYPOINT ["px0", "-host", "0.0.0.0", "-no-open"]
 CMD ["/workspace"]
