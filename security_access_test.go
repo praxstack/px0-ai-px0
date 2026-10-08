@@ -380,3 +380,20 @@ func TestTokenCookieSecureOverHTTPS(t *testing.T) {
 		t.Errorf("X-Forwarded-Proto http: cookie is Secure")
 	}
 }
+
+// "*" accepts every Host, so listing it next to named hosts reads like a
+// restriction that is not there. That mix is refused; "*" alone still works.
+func TestAllowedHostsWildcardMix(t *testing.T) {
+	for _, v := range []string{"px0.example.com,*", "*,px0.example.com", "*.example.com, *"} {
+		s, _ := newTestServer(t)
+		_, err := s.Secure(AccessConfig{BindHost: "127.0.0.1", Port: 7777, AllowedHosts: parseAllowedHosts(v)})
+		if err == nil || !strings.Contains(err.Error(), "-allowed-hosts") {
+			t.Errorf("-allowed-hosts %q: err = %v, want a refusal naming -allowed-hosts", v, err)
+		}
+	}
+	s, _ := newTestServer(t)
+	mustSecure(t, s, AccessConfig{BindHost: "127.0.0.1", Port: 7777, AllowedHosts: parseAllowedHosts("*")})
+	if rec := doReq(s, "GET", "/api/meta", "anything.example", nil, ""); rec.Code != http.StatusOK {
+		t.Errorf(`"*" alone: foreign Host got %d, want 200`, rec.Code)
+	}
+}

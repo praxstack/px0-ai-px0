@@ -99,6 +99,23 @@ func parseAllowedHosts(v string) []string {
 	return out
 }
 
+// checkAllowedHosts refuses "*" listed together with named hosts: "*" accepts
+// every Host, so the names would suggest a restriction that does not exist.
+func checkAllowedHosts(hosts []string) error {
+	wild, named := false, false
+	for _, h := range hosts {
+		if h == "*" {
+			wild = true
+		} else {
+			named = true
+		}
+	}
+	if wild && named {
+		return errors.New(`-allowed-hosts (or PX0_ALLOWED_HOSTS): "*" accepts every Host, so it cannot be combined with named hosts; list only the names, or use "*" on its own`)
+	}
+	return nil
+}
+
 // normalizeHost strips the port, IPv6 brackets and a trailing dot, and lowercases.
 func normalizeHost(hostHeader string) string {
 	host := strings.TrimSpace(hostHeader)
@@ -155,6 +172,9 @@ func (s *Server) Secure(cfg AccessConfig) (string, error) {
 	}
 	if cfg.Token != "" && !cookieSafeToken(cfg.Token) {
 		return "", errors.New(`access token may only contain printable ASCII without spaces, '"', ',', ';' or '\'`)
+	}
+	if err := checkAllowedHosts(cfg.AllowedHosts); err != nil {
+		return "", err
 	}
 	s.hostGuard = true
 	s.allowedHosts = cfg.AllowedHosts

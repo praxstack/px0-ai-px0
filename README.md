@@ -98,7 +98,7 @@ can send `Authorization: Bearer <token>` instead.
 | :--- | :--- | :--- |
 | `-token T` | `PX0_TOKEN` | Use a known token (at least 16 printable ASCII characters, without spaces, `"`, `,`, `;` or `\`) instead of a random one. It is required on every bind, loopback included. Prefer the env var: flags are visible in `ps`. |
 | `-no-auth` | | Turn the token off on a non-loopback bind. Use it only behind a gateway that authenticates users itself. |
-| `-allowed-hosts H,…` | `PX0_ALLOWED_HOSTS` | Extra `Host` names to accept besides `localhost` and IP addresses, e.g. the public name of a reverse proxy or tunnel. `*.example.com` matches subdomains. `*` accepts any `Host` and turns DNS-rebinding protection off. |
+| `-allowed-hosts H,…` | `PX0_ALLOWED_HOSTS` | Extra `Host` names to accept besides `localhost` and IP addresses, e.g. the public name of a reverse proxy or tunnel. `*.example.com` matches subdomains. `*` accepts any `Host` and turns DNS-rebinding protection off; it must be used on its own, not next to named hosts. |
 
 Without a token, px0 rejects any request whose `Host` is not `localhost`, an IP
 address or a name listed in `-allowed-hosts`. This blocks DNS rebinding. A

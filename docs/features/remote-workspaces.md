@@ -95,7 +95,7 @@ The token is sent once as `?token=`. px0 then sets an HttpOnly, SameSite=Strict 
 | `-host H` | `127.0.0.1` | Network address to bind |
 | `-token T` | `$PX0_TOKEN` | Access token (16+ printable ASCII characters; no spaces, `"`, `,`, `;` or `\`) required on every request. A random one is generated on non-loopback binds when unset |
 | `-no-auth` | `false` | No access token on a non-loopback bind. Only behind a gateway that authenticates users |
-| `-allowed-hosts H,…` | `$PX0_ALLOWED_HOSTS` | Extra `Host` names to accept besides `localhost` and IPs (`*.example.com` for subdomains, `*` for any) |
+| `-allowed-hosts H,…` | `$PX0_ALLOWED_HOSTS` | Extra `Host` names to accept besides `localhost` and IPs (`*.example.com` for subdomains, `*` on its own for any) |
 | `-no-open` | `false` | Suppress automatic browser launch (ideal for servers) |
 | `-no-lsp` | `false` | Disable Language Server discovery |
 | `-no-git` | `false` | Disable Git status checks and diff viewing |
