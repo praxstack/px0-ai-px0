@@ -102,7 +102,7 @@ The token is sent once as `?token=`. px0 then sets an HttpOnly, SameSite=Strict 
 | `-agent H` | none | Pin active coding agent harness for session |
 | `-no-agent` | `false` | Disable coding agent editing features entirely |
 | `-verbose` | `false` | Log every HTTP request, searches, symbols, and agent prompts to terminal |
-| `-quiet` | `false` | Suppress CLI narration on stdout |
+| `-quiet` | `false` | Suppress CLI narration on stdout (a generated access token is still printed) |
 | `-update` | `false` | Check for updates and install latest release |
 | `-version` | `false` | Print version and architecture and exit |
 

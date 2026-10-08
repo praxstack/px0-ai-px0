@@ -1417,3 +1417,26 @@ func TestVerboseLogsGuardedRequests(t *testing.T) {
 		t.Errorf("verbose log contains the access token:\n%s", log)
 	}
 }
+
+func TestQuietStillPrintsGeneratedToken(t *testing.T) {
+	origQuiet := uiQuiet
+	defer func() { uiQuiet = origQuiet }()
+
+	var buf bytes.Buffer
+	uiQuiet = true
+	printAccess(&buf, testToken, true, false, "0.0.0.0")
+	if !strings.Contains(buf.String(), testToken) {
+		t.Errorf("-quiet hid the generated access token, output %q", buf.String())
+	}
+	buf.Reset()
+	printAccess(&buf, testToken, false, false, "0.0.0.0")
+	if buf.Len() != 0 {
+		t.Errorf("-quiet printed a token the operator supplied: %q", buf.String())
+	}
+	uiQuiet = false
+	buf.Reset()
+	printAccess(&buf, testToken, false, false, "0.0.0.0")
+	if !strings.Contains(buf.String(), testToken) {
+		t.Errorf("supplied token not printed without -quiet, output %q", buf.String())
+	}
+}

@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -39,7 +40,7 @@ func main() {
 		doUpdate     = flag.Bool("update", false, "check for and install latest version of px0")
 		noUpdate     = flag.Bool("no-update", false, "do not auto-update px0 on startup")
 		noColor      = flag.Bool("no-color", false, "disable colour output")
-		quiet        = flag.Bool("quiet", false, "suppress narration")
+		quiet        = flag.Bool("quiet", false, "suppress narration (a generated access token is still printed)")
 		verbose      = flag.Bool("verbose", false, "log startup steps, requests, searches, symbols, and agent prompts to terminal")
 		noTelemetry  = flag.Bool("no-telemetry", false, "disable anonymous usage telemetry")
 		agentCmd     = flag.String("agent", "", "pin the coding harness used for edits (claude, gemini, cursor-agent, agy, opencode, codex, aider, goose, or a command template containing {prompt}); detected and chosen in the UI when omitted")
@@ -210,11 +211,7 @@ func main() {
 			uiKV("network", uiAccent(withToken(networkURL, accessToken), os.Stdout), 11, os.Stdout)
 		}
 	}
-	if accessToken != "" {
-		uiKV("token", accessToken+uiDim("  (add ?token=… to any URL that reaches this px0)", os.Stdout), 11, os.Stdout)
-	} else if *noAuth && !isLoopbackBind(*host) {
-		uiKV("access", paint("no access token (-no-auth): anyone who can reach this port can read the workspace", colorWarn, true, os.Stdout), 11, os.Stdout)
-	}
+	printAccess(os.Stdout, accessToken, access.Token == "", *noAuth, *host)
 	uiHint("ctrl-c to stop", os.Stdout)
 
 	if uiVerbose {
@@ -328,6 +325,21 @@ func main() {
 // If the target is inside a git repository, that repository root is used as the workspace root.
 // Otherwise, for relative paths within the current working directory, the working directory
 // is used. Standalone files fall back to their parent directory.
+// printAccess prints the access token, or a warning when -no-auth exposes the
+// workspace. A token px0 generated exists nowhere else, so it is printed even
+// under -quiet: without it nobody could open the server.
+func printAccess(w io.Writer, token string, generated, noAuth bool, bindHost string) {
+	if token != "" {
+		kv := uiKV
+		if generated {
+			kv = uiKVAlways
+		}
+		kv("token", token+uiDim("  (add ?token=… to any URL that reaches this px0)", w), 11, w)
+	} else if noAuth && !isLoopbackBind(bindHost) {
+		uiKV("access", paint("no access token (-no-auth): anyone who can reach this port can read the workspace", colorWarn, true, w), 11, w)
+	}
+}
+
 func resolveTarget(target string) (root, initialFile string, initialLine int, err error) {
 	cleanedTarget, line := splitTargetLine(target)
 	abs, err := filepath.Abs(cleanedTarget)

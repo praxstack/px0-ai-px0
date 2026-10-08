@@ -155,6 +155,12 @@ func uiKV(label, value string, width int, w io.Writer) {
 	if uiQuiet {
 		return
 	}
+	uiKVAlways(label, value, width, w)
+}
+
+// uiKVAlways is uiKV that -quiet does not silence, for the few lines the
+// operator cannot do without.
+func uiKVAlways(label, value string, width int, w io.Writer) {
 	labelText := label + ":"
 	if width > 0 && len(labelText) < width {
 		labelText = labelText + strings.Repeat(" ", width-len(labelText))
