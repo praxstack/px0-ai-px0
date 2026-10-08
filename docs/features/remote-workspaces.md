@@ -93,7 +93,7 @@ The token is sent once as `?token=`. px0 then sets an HttpOnly, SameSite=Strict 
 | `-base-path P` | `"/"` | Base URL path prefix to serve endpoints and assets from (e.g. `/rev-123/`). Also configurable in settings via `server.basePath`. |
 | `-port N` | `7777` | Port to listen on (`0` picks an ephemeral free port) |
 | `-host H` | `127.0.0.1` | Network address to bind |
-| `-token T` | `$PX0_TOKEN` | Access token (16+ characters) required on every request. A random one is generated on non-loopback binds when unset |
+| `-token T` | `$PX0_TOKEN` | Access token (16+ printable ASCII characters; no spaces, `"`, `,`, `;` or `\`) required on every request. A random one is generated on non-loopback binds when unset |
 | `-no-auth` | `false` | No access token on a non-loopback bind. Only behind a gateway that authenticates users |
 | `-allowed-hosts H,…` | `$PX0_ALLOWED_HOSTS` | Extra `Host` names to accept besides `localhost` and IPs (`*.example.com` for subdomains, `*` for any) |
 | `-no-open` | `false` | Suppress automatic browser launch (ideal for servers) |

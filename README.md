@@ -96,7 +96,7 @@ can send `Authorization: Bearer <token>` instead.
 
 | Flag | Env | Purpose |
 | :--- | :--- | :--- |
-| `-token T` | `PX0_TOKEN` | Use a known token (at least 16 characters) instead of a random one. It is required on every bind, loopback included. Prefer the env var: flags are visible in `ps`. |
+| `-token T` | `PX0_TOKEN` | Use a known token (at least 16 printable ASCII characters, without spaces, `"`, `,`, `;` or `\`) instead of a random one. It is required on every bind, loopback included. Prefer the env var: flags are visible in `ps`. |
 | `-no-auth` | | Turn the token off on a non-loopback bind. Use it only behind a gateway that authenticates users itself. |
 | `-allowed-hosts H,…` | `PX0_ALLOWED_HOSTS` | Extra `Host` names to accept besides `localhost` and IP addresses, e.g. the public name of a reverse proxy or tunnel. `*.example.com` matches subdomains. `*` accepts any `Host` and turns DNS-rebinding protection off. |
 

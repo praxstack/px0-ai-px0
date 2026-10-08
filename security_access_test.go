@@ -280,3 +280,30 @@ func TestLocalhostAliasPost(t *testing.T) {
 		t.Errorf("unguarded POST via foreign Host: got %d, want 403", rec.Code)
 	}
 }
+
+// A supplied token must survive http.SetCookie unchanged, or the browser is
+// admitted by ?token= once and then gets 401 with the (sanitized) cookie.
+func TestSuppliedTokenIsCookieSafe(t *testing.T) {
+	for _, bad := range []string{"0123456789abcdef;x", "0123456789abcdef x", "0123456789abcdef,x", `0123456789abcdef"x`, `0123456789abcdef\x`, "0123456789abcdefé"} {
+		s, _ := newTestServer(t)
+		if _, err := s.Secure(AccessConfig{BindHost: "0.0.0.0", Port: 7777, Token: bad}); err == nil {
+			t.Errorf("token %q: want error", bad)
+		}
+	}
+	// Every other printable ASCII byte is kept by SetCookie and accepted back.
+	const good = "Az09!#$%&'()*+-./:<=>?@[]^_`{|}~"
+	s, _ := newTestServer(t)
+	mustSecure(t, s, AccessConfig{BindHost: "0.0.0.0", Port: 7777, Token: good})
+	cookies := doReq(s, "GET", "/api/meta?token="+url.QueryEscape(good), "10.0.0.5:7777", nil, "").Result().Cookies()
+	if len(cookies) != 1 || cookies[0].Value != good {
+		t.Fatalf("cookie after ?token= = %v, want value %q", cookies, good)
+	}
+	req := httptest.NewRequest("GET", "/api/meta", nil)
+	req.Host = "10.0.0.5:7777"
+	req.AddCookie(cookies[0])
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("request with the cookie: got %d, want 200", rec.Code)
+	}
+}

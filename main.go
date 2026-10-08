@@ -47,7 +47,7 @@ func main() {
 		_            = flag.Bool("y", false, "answer yes to prompts (deprecated; PRs are always opened without prompt)")
 		_            = flag.Bool("yes", false, "answer yes to prompts (alias for -y)")
 		basePathFlag = flag.String("base-path", "", "base URL path prefix to serve endpoints and assets from (e.g. /rev-123/)")
-		tokenFlag    = flag.String("token", "", "access token required on every request, at least 16 characters (default $PX0_TOKEN; a random one is generated on non-loopback binds when unset)")
+		tokenFlag    = flag.String("token", "", "access token required on every request, at least 16 printable ASCII characters, no spaces or the characters \" , ; \\ (default $PX0_TOKEN; a random one is generated on non-loopback binds when unset)")
 		noAuth       = flag.Bool("no-auth", false, "do not require an access token on a non-loopback bind; only for use behind a gateway that authenticates users")
 		allowedHosts = flag.String("allowed-hosts", "", "comma-separated Host names to accept besides localhost and IP addresses, e.g. a reverse proxy or tunnel hostname; *.example.com matches subdomains, * accepts any (default $PX0_ALLOWED_HOSTS)")
 	)

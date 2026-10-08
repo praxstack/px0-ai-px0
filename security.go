@@ -51,6 +51,20 @@ func isLoopbackBind(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// cookieSafeToken reports whether tok survives a round trip through the
+// access-token cookie unchanged. http.SetCookie drops bytes that are not
+// valid in a cookie value and quotes values with a space or comma, so such a
+// token would authenticate the first ?token= request and then fail as a cookie.
+func cookieSafeToken(tok string) bool {
+	for i := 0; i < len(tok); i++ {
+		switch b := tok[i]; {
+		case b <= ' ' || b >= 0x7f, b == '"', b == ',', b == ';', b == '\\':
+			return false
+		}
+	}
+	return true
+}
+
 func newAccessToken() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
@@ -138,6 +152,9 @@ func (s *Server) Secure(cfg AccessConfig) (string, error) {
 	}
 	if cfg.Token != "" && len(cfg.Token) < minTokenLen {
 		return "", fmt.Errorf("access token must be at least %d characters", minTokenLen)
+	}
+	if cfg.Token != "" && !cookieSafeToken(cfg.Token) {
+		return "", errors.New(`access token may only contain printable ASCII without spaces, '"', ',', ';' or '\'`)
 	}
 	s.hostGuard = true
 	s.allowedHosts = cfg.AllowedHosts
