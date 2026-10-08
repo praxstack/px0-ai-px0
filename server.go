@@ -67,7 +67,8 @@ type Server struct {
 	basePath   string
 	session    *sessionManager
 
-	hostGuard bool // reject requests whose Host is not localhost or an IP (DNS rebinding)
+	accessToken string // non-empty on non-loopback binds: required on every request
+	hostGuard   bool   // reject requests whose Host is not localhost or an IP (DNS rebinding)
 
 	lastReq atomic.Int64 // unix nanos of the most recent request
 }

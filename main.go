@@ -156,7 +156,7 @@ func main() {
 
 	pxSrv := NewServer(ix, lsp, configuredBasePath)
 	pxSrv.tel = tel
-	pxSrv.Secure()
+	accessToken := pxSrv.Secure(*host)
 	if pr != nil {
 		pxSrv.SetPR(pr)
 	}
@@ -172,7 +172,7 @@ func main() {
 
 	srv := &http.Server{Handler: pxSrv}
 
-	url := viewerURL(addr, initialFile, initialLine, configuredBasePath)
+	url := withToken(viewerURL(addr, initialFile, initialLine, configuredBasePath), accessToken)
 	uiHeading("px0 "+version, nil, os.Stdout)
 	if pr != nil {
 		prTitle := fmt.Sprintf("#%d %s", pr.meta.Number, pr.meta.Title)
@@ -188,7 +188,7 @@ func main() {
 	uiKV("url", uiAccent(url, os.Stdout), 11, os.Stdout)
 	if *host == "0.0.0.0" {
 		for _, networkURL := range networkURLs(addr, initialFile, initialLine) {
-			uiKV("network", uiAccent(networkURL, os.Stdout), 11, os.Stdout)
+			uiKV("network", uiAccent(withToken(networkURL, accessToken), os.Stdout), 11, os.Stdout)
 		}
 	}
 	uiHint("ctrl-c to stop", os.Stdout)
