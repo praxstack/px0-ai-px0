@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode"
+	"unicode/utf8"
 )
 
 // FuzzyResult represents a matched file path ranked by the fuzzy search engine.
@@ -94,10 +96,40 @@ func min(a, b int) int {
 	return b
 }
 
+// foldLower lowercases s for fuzzy matching without changing its byte length,
+// so a byte offset in the result is the same offset in s. Each rune is
+// lowercased only when its lowercase form encodes to the same number of bytes
+// (É→é, Ü→ü, Ω→ω); a rune whose lowercase is longer or shorter (U+023A, U+0130)
+// and any invalid byte are kept as they are.
+func foldLower(s string) string {
+	i := 0
+	for i < len(s) && s[i] < utf8.RuneSelf {
+		i++
+	}
+	if i == len(s) {
+		return asciiLowerString(s)
+	}
+	b := make([]byte, 0, len(s))
+	b = append(b, asciiLowerString(s[:i])...)
+	for i < len(s) {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r != utf8.RuneError || size > 1 {
+			if l := unicode.ToLower(r); utf8.RuneLen(l) == size {
+				b = utf8.AppendRune(b, l)
+				i += size
+				continue
+			}
+		}
+		b = append(b, s[i:i+size]...)
+		i += size
+	}
+	return string(b)
+}
+
 // FuzzyFind ranks every indexed path against query and returns the best limit.
 func FuzzyFind(files []FileEntry, query string, limit int) []FuzzyResult {
 	origQ := strings.ReplaceAll(strings.TrimSpace(query), " ", "")
-	q := asciiLowerString(origQ)
+	q := foldLower(origQ)
 
 	if q == "" {
 		out := make([]FuzzyResult, 0, limit)

@@ -49,3 +49,32 @@ func TestFuzzyFindLowerChangesLength(t *testing.T) {
 		}
 	}
 }
+
+// Fuzzy find folds case for non-ASCII letters too, wherever folding keeps the
+// byte length (so match positions still index Path).
+func TestFuzzyFindFoldsUnicodeCase(t *testing.T) {
+	root := t.TempDir()
+	for _, n := range []string{"École.go", "Über.go", "Ωmega.go", "ȺȺzz.go", "plain.go"} {
+		if err := os.WriteFile(filepath.Join(root, n), []byte("package x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ix := NewIndex(root)
+	ix.Build()
+	files := ix.Files()
+	for q, want := range map[string]string{"école": "École.go", "über": "Über.go", "ÜBER": "Über.go", "ωmega": "Ωmega.go", "ȺȺzz": "ȺȺzz.go"} {
+		res := FuzzyFind(files, q, 10)
+		found := false
+		for _, r := range res {
+			found = found || strings.HasSuffix(r.Path, want)
+			for _, i := range r.Pos {
+				if i < 0 || i >= len(r.Path) {
+					t.Fatalf("query %q: pos %d out of range for %q", q, i, r.Path)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("query %q: %s not found in %v", q, want, res)
+		}
+	}
+}
