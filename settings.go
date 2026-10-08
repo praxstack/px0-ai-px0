@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 )
 
@@ -65,7 +66,7 @@ type settingSchemaItem struct {
 	Min         *float64 `json:"min,omitempty"`
 	Max         *float64 `json:"max,omitempty"`
 	Step        *float64 `json:"step,omitempty"`
-	Secret      bool     `json:"secret,omitempty"` // render as a masked input; still returned in plaintext by /api/settings, same trust model as every other local setting
+	Secret      bool     `json:"secret,omitempty"` // render as a masked input; /api/settings returns maskedSecret in its place
 }
 
 func numPtr(v float64) *float64 { return &v }
@@ -463,6 +464,12 @@ func readSettingsLocked() settings {
 }
 
 // readMergedSettingsMap returns all settings, overlaying stored settings onto defaults.
+// maskedSecret stands in for secret values in anything sent to the browser.
+// Writing it back leaves the stored secret untouched.
+const maskedSecret = "********"
+
+var githubTokenRe = regexp.MustCompile(`("github\.token"\s*:\s*)"(?:[^"\\]|\\.)*"`)
+
 func readMergedSettingsMap() map[string]any {
 	settingsMu.Lock()
 	defer settingsMu.Unlock()
@@ -472,6 +479,9 @@ func readMergedSettingsMap() map[string]any {
 
 	for k, v := range raw {
 		res[k] = v
+	}
+	if t, ok := res["github.token"].(string); ok && t != "" {
+		res["github.token"] = maskedSecret
 	}
 
 	// Synchronize agent / agent.harness
@@ -531,12 +541,17 @@ func readRawSettingsJSON() string {
 	}
 	// Pretty format if possible
 	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err == nil {
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return githubTokenRe.ReplaceAllString(string(data), `$1"`+maskedSecret+`"`)
+	} else {
+		if t, ok := raw["github.token"].(string); ok && t != "" {
+			raw["github.token"] = maskedSecret
+		}
 		if formatted, err := json.MarshalIndent(raw, "", "  "); err == nil {
 			return string(formatted) + "\n"
 		}
 	}
-	return string(data)
+	return githubTokenRe.ReplaceAllString(string(data), `$1"`+maskedSecret+`"`)
 }
 
 // writeSettings saves the agent and models choices while preserving other settings.
@@ -579,6 +594,9 @@ func updateSettingsMap(updates map[string]any) error {
 
 	raw := readSettingsRawMap()
 	for k, v := range updates {
+		if k == "github.token" && v == maskedSecret {
+			continue // the browser echoed the mask back: keep the stored token
+		}
 		if v == nil {
 			delete(raw, k)
 		} else {
@@ -663,6 +681,14 @@ func saveRawSettingsJSON(rawJSON []byte) error {
 	}
 	settingsMu.Lock()
 	defer settingsMu.Unlock()
+
+	if m["github.token"] == maskedSecret {
+		if old, ok := readSettingsRawMap()["github.token"]; ok {
+			m["github.token"] = old
+		} else {
+			delete(m, "github.token")
+		}
+	}
 
 	// Sync agent bridges if present
 	if ag, ok := m["agent"].(string); ok && ag != "" {

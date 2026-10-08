@@ -67,6 +67,8 @@ type Server struct {
 	basePath   string
 	session    *sessionManager
 
+	hostGuard bool // reject requests whose Host is not localhost or an IP (DNS rebinding)
+
 	lastReq atomic.Int64 // unix nanos of the most recent request
 }
 
@@ -238,6 +240,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	isSSE := r.URL.Path == streamPath || r.URL.Path == gitStreamPath || r.Header.Get("Accept") == "text/event-stream"
 	if r.URL.Path != metricsPath && !isSSE {
 		s.lastReq.Store(time.Now().UnixNano())
+	}
+	if !s.guard(w, r) {
+		return
 	}
 	start := time.Now()
 

@@ -156,6 +156,7 @@ func main() {
 
 	pxSrv := NewServer(ix, lsp, configuredBasePath)
 	pxSrv.tel = tel
+	pxSrv.Secure()
 	if pr != nil {
 		pxSrv.SetPR(pr)
 	}
