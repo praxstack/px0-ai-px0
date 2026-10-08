@@ -224,7 +224,7 @@ Every mutating endpoint is guarded by `localPost` ([`lspsetup.go`](../../lspsetu
 
 ### Security Posture
 
-The edit endpoint runs a general-purpose coding agent with shell access as the user who started px0. `localPost` restricts it to px0's own page reached by IP address or `localhost`. That shuts out other websites and DNS rebinding, and makes editing unavailable through the hostname-based tunnels and reverse proxies described in the README. It is not authentication: with `-host 0.0.0.0`, anyone who can reach px0 by IP, for example over Tailscale, can dispatch an edit. Exposing editing beyond a trusted network requires an authentication story px0 does not yet have.
+The edit endpoint runs a general-purpose coding agent with shell access as the user who started px0. `localPost` restricts it to px0's own page (`Origin` must match `Host`) reached by IP address or `localhost`. That shuts out other websites and DNS rebinding. A hostname is accepted only when `guard` has already vouched for it: the request carried the access token, or the hostname is listed in `-allowed-hosts`. On a non-loopback bind every request needs the access token (generated at startup, or set with `-token` / `PX0_TOKEN`), so anyone who can reach the port but lacks the token cannot dispatch an edit. `-no-auth` removes that check and leaves authentication to a gateway in front of px0.
 
 The explicit first-run pick matters for the same reason. Auto-enabling on discovery would mean any px0 instance on a machine with a harness installed is a code execution endpoint that nobody opted into.
 

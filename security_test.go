@@ -17,9 +17,18 @@ func reqHost(s *Server, method, path, host string) *httptest.ResponseRecorder {
 	return rec
 }
 
+func mustSecure(t *testing.T, s *Server, cfg AccessConfig) string {
+	t.Helper()
+	tok, err := s.Secure(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tok
+}
+
 func TestHostGuardRejectsForeignHost(t *testing.T) {
 	s, _ := newTestServer(t)
-	s.Secure("127.0.0.1")
+	mustSecure(t, s, AccessConfig{BindHost: "127.0.0.1", Port: 7777})
 	for _, p := range []string{"/api/tree", "/api/file?path=main.go", "/api/settings", "/api/git/log", "/"} {
 		if rec := reqHost(s, http.MethodGet, p, "rebind.attacker.example:7777"); rec.Code != http.StatusForbidden {
 			t.Errorf("GET %s with foreign Host: got %d, want 403", p, rec.Code)
@@ -63,7 +72,7 @@ func TestSettingsMasksGitHubToken(t *testing.T) {
 
 func TestNonLoopbackBindRequiresToken(t *testing.T) {
 	s, _ := newTestServer(t)
-	tok := s.Secure("0.0.0.0")
+	tok := mustSecure(t, s, AccessConfig{BindHost: "0.0.0.0", Port: 7777})
 	if tok == "" {
 		t.Fatal("non-loopback bind must generate an access token")
 	}
@@ -83,7 +92,7 @@ func TestNonLoopbackBindRequiresToken(t *testing.T) {
 		t.Fatalf("valid token: got %d", rec.Code)
 	}
 	cookies := rec.Result().Cookies()
-	if len(cookies) != 1 || cookies[0].Name != tokenCookie || !cookies[0].HttpOnly {
+	if len(cookies) != 1 || cookies[0].Name != "px0_token_7777" || !cookies[0].HttpOnly {
 		t.Fatalf("expected HttpOnly token cookie, got %v", cookies)
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/tree", nil)
@@ -105,13 +114,13 @@ func TestNonLoopbackBindRequiresToken(t *testing.T) {
 func TestLoopbackBindNeedsNoToken(t *testing.T) {
 	for _, h := range []string{"127.0.0.1", "localhost", "::1", "[::1]"} {
 		s, _ := newTestServer(t)
-		if tok := s.Secure(h); tok != "" {
+		if tok := mustSecure(t, s, AccessConfig{BindHost: h}); tok != "" {
 			t.Errorf("bind %q: unexpected token", h)
 		}
 	}
 	for _, h := range []string{"0.0.0.0", "", "::", "192.168.1.5"} {
 		s, _ := newTestServer(t)
-		if tok := s.Secure(h); tok == "" {
+		if tok := mustSecure(t, s, AccessConfig{BindHost: h}); tok == "" {
 			t.Errorf("bind %q: expected token", h)
 		}
 	}

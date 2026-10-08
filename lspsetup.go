@@ -260,7 +260,7 @@ func (t *tailBuffer) String() string {
 // from px0's own page. Browsers send Origin on every POST, so a page from another
 // site cannot pass. Requiring the Host to be an IP address or localhost also
 // shuts out DNS rebinding, where an attacker's domain is pointed at this machine
-// and its Origin would otherwise match.
+// and its Origin would otherwise match, unless guard vouched for the Host.
 func localPost(w http.ResponseWriter, r *http.Request) bool {
 	if r.Method != http.MethodPost {
 		fail(w, http.StatusMethodNotAllowed, "POST only")
@@ -271,7 +271,10 @@ func localPost(w http.ResponseWriter, r *http.Request) bool {
 		host = h
 	}
 	host = strings.Trim(host, "[]")
-	if host != "localhost" && net.ParseIP(host) == nil {
+	// A request that presented the access token, or whose Host is listed in
+	// -allowed-hosts, already passed the rebinding check in guard; the Origin
+	// check below still applies to it.
+	if !hostTrusted(r) && host != "localhost" && net.ParseIP(host) == nil {
 		fail(w, http.StatusForbidden, "open px0 by IP address or localhost to set up language servers")
 		return false
 	}

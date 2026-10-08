@@ -66,8 +66,8 @@ px0 https://github.com/owner/repo/pull/123
 # Remote or headless server mode
 px0 -host 0.0.0.0 -port 7777 ~/workspace
 
-# Behind a reverse proxy under a subpath
-px0 -base-path /rev-123/ -host 0.0.0.0 -port 7777 ~/workspace
+# Behind an authenticating gateway under a subpath
+px0 -base-path /rev-123/ -host 0.0.0.0 -no-auth -allowed-hosts tenant.example.com ~/workspace
 ```
 
 When px0 binds to `0.0.0.0`, it prints a `network` URL for every unique
@@ -84,9 +84,38 @@ Open the address that is reachable from your local machine. The list can
 include LAN, VPN, and container-network addresses, depending on the remote
 host's interfaces.
 
-Access securely over Tailscale, WireGuard, reverse proxy, or Cloudflare Tunnel
-with zero remote setup overhead and strict read-only sandboxing
-(path traversal protection & DNS rebinding checks).
+### Access token and allowed hosts
+
+On any bind other than loopback (`127.0.0.1`, `::1`, `localhost`), px0
+requires an access token on every request. By default it generates a random
+one at startup and puts it in the printed URLs as `?token=…`. It also prints a
+`token` line, so you can add `?token=…` to whatever address reaches px0 (a
+Docker port mapping, a VPN name). The browser swaps the query parameter for an
+HttpOnly cookie on first load and then drops it from the address bar. Scripts
+can send `Authorization: Bearer <token>` instead.
+
+| Flag | Env | Purpose |
+| :--- | :--- | :--- |
+| `-token T` | `PX0_TOKEN` | Use a known token (at least 16 characters) instead of a random one. It is required on every bind, loopback included. Prefer the env var: flags are visible in `ps`. |
+| `-no-auth` | | Turn the token off on a non-loopback bind. Use it only behind a gateway that authenticates users itself. |
+| `-allowed-hosts H,…` | `PX0_ALLOWED_HOSTS` | Extra `Host` names to accept besides `localhost` and IP addresses, e.g. the public name of a reverse proxy or tunnel. `*.example.com` matches subdomains. `*` accepts any `Host` and turns DNS-rebinding protection off. |
+
+Without a token, px0 rejects any request whose `Host` is not `localhost`, an IP
+address or a name listed in `-allowed-hosts`. This blocks DNS rebinding. A
+reverse proxy or Cloudflare Tunnel that keeps the public hostname therefore
+needs either `-allowed-hosts px0.example.com` or a token:
+
+```bash
+# Cloudflare Tunnel / Caddy in front of a loopback px0
+px0 -allowed-hosts px0.example.com ~/workspace
+
+# Docker: pick the token so the URL is known up front
+docker run -e PX0_TOKEN=$(openssl rand -hex 16) -p 7777:7777 -v "$PWD":/workspace px0
+# then open http://localhost:7777/?token=<that token>
+```
+
+Traffic is plain HTTP, so on an untrusted network put px0 behind Tailscale,
+WireGuard or a TLS proxy. Path traversal protection applies in every mode.
 
 ## Development
 

@@ -22,8 +22,9 @@ px0 simplifies remote code inspection into a single shell command. Because the e
 - **Headless Server Mode (`-no-open`)**: Starts the server silently on remote machines or in Docker containers without attempting to invoke a local web browser.
 - **Built-in Security & Sandboxing**:
   - **Path Traversal Protection**: Enforces strict path sandboxing; requests attempting to escape the workspace root using `../` or symlink cycle attacks are immediately blocked.
-  - **DNS Rebinding Defense**: Inspects incoming HTTP `Host` headers to prevent cross-site scripting attacks via malicious DNS records.
-  - **Agent Security Restrictions**: Agent editing commands are permitted only over direct IP addresses or `localhost`. Access over external hostnames or tunnel proxies automatically disables agent modifications to protect remote machines.
+  - **Access Token on Network Binds**: On any bind other than loopback, every request must carry an access token (`?token=` once, then an HttpOnly cookie, or `Authorization: Bearer`). px0 generates one at startup unless you pass `-token` / `PX0_TOKEN`, or opt out with `-no-auth` behind a gateway that authenticates users. See [Access control](#access-control).
+  - **DNS Rebinding Defense**: Without a token, px0 rejects requests whose `Host` header is not `localhost`, an IP address or a name listed in `-allowed-hosts` / `PX0_ALLOWED_HOSTS`.
+  - **Agent Security Restrictions**: Agent editing, language-server installs and other machine-changing POSTs must come from px0's own page (`Origin` must match `Host`). Over a hostname they are allowed only when the request carries the token or the hostname is in `-allowed-hosts`.
 - **Direct Terminal Ergonomics**: Launch px0 targeting specific files or line numbers directly from the command line:
   - `px0` (opens current directory)
   - `px0 ~/projects/kernel` (opens specified repository)
@@ -39,13 +40,14 @@ Run px0 on your cloud instance bound to all interfaces:
 ```bash
 px0 -host 0.0.0.0 -port 7777 ~/work/repo
 ```
-Open your local browser to `http://100.x.y.z:7777` (your machine's private Tailscale IP). You get full code reading, fuzzy search, and diff inspection with zero SSH lag.
+Open the `network` URL px0 prints (for example `http://100.x.y.z:7777/?token=…`, your machine's private Tailscale IP). The token is in the URL; px0 also prints it on its own `token` line. You get full code reading, fuzzy search, and diff inspection with zero SSH lag.
 
 ### 2. Ephemeral Docker Container Inspection
 Inspect code inside a running container or test environment:
 ```bash
-docker run -p 7777:7777 -v $(pwd):/workspace px0:latest -host 0.0.0.0 /workspace
+docker run -e PX0_TOKEN=$(openssl rand -hex 16) -p 7777:7777 -v $(pwd):/workspace px0:latest /workspace
 ```
+The image binds `0.0.0.0`, so a token is required. The `network` URLs px0 prints are container addresses. Open `http://localhost:7777/?token=<PX0_TOKEN>` instead. Without `PX0_TOKEN`, read the generated token from `docker logs`.
 
 ### 3. CI/CD Runner Debugging
 When a build or test suite fails on a remote CI runner, download px0, run it in the background, and inspect generated artifacts, failure logs, and git status directly in your browser.
@@ -53,10 +55,15 @@ When a build or test suite fails on a remote CI runner, download px0, run it in 
 ### 4. Reverse Proxy & Subpath Hosting (`-base-path`)
 When hosting px0 behind a reverse proxy (Nginx, Traefik, Caddy), an API gateway, or a multi-tenant cloud platform (such as PR review pods at `https://tenant.px0.ai/rev-123/` or internal portals at `https://corp.internal/tools/px0/`), px0 is served from a URL subpath rather than the root domain (`/`).
 
-Run px0 with `-base-path`:
+Run px0 with `-base-path`. Then choose how requests are authenticated:
 ```bash
-px0 -base-path /rev-123/ -host 0.0.0.0 -port 7777 ~/workspace
+# The gateway authenticates users and forwards Host tenant.px0.ai
+px0 -base-path /rev-123/ -host 0.0.0.0 -no-auth -allowed-hosts tenant.px0.ai ~/workspace
+
+# The gateway forwards requests as-is; users carry px0's token
+PX0_TOKEN=... px0 -base-path /rev-123/ -host 0.0.0.0 ~/workspace
 ```
+With `-no-auth`, px0 checks only the `Host` header. Make sure the pod port is reachable only through the gateway. If the gateway rewrites `Host` to an internal service name, list that name in `-allowed-hosts`. Machine-changing POSTs also need the browser's `Origin` to match the `Host` px0 sees.
 
 **When to use `-base-path`:**
 - **Hosted/Multi-Tenant Review Platforms**: When each PR review environment runs in an isolated container/pod routed through an edge gateway under a subpath (e.g. `/rev-<id>/`).
@@ -68,6 +75,15 @@ px0 -base-path /rev-123/ -host 0.0.0.0 -port 7777 ~/workspace
 - Dynamically injects `<base href="/<base-path>/">` into the served `index.html`, allowing the browser to resolve all relative asset requests, WebSocket/SSE connections, and API calls correctly.
 - Automatically handles redirects: requests to `/<base-path>` without a trailing slash redirect to `/<base-path>/`, and root `/` redirects to the configured base path.
 
+### Access control
+
+| Bind | Default | Override |
+| :--- | :--- | :--- |
+| loopback (`127.0.0.1`, `::1`, `localhost`) | no token; `Host` must be `localhost`, an IP or an `-allowed-hosts` name | `-token` / `PX0_TOKEN` requires a token here too, e.g. for a tunnel |
+| anything else (`0.0.0.0`, a LAN IP) | random token printed at startup | `-token` / `PX0_TOKEN` to choose it; `-no-auth` to turn it off behind an authenticating gateway |
+
+The token is sent once as `?token=`. px0 then sets an HttpOnly, SameSite=Strict cookie named `px0_token_<port>` and redirects the browser to the same URL without the token. API clients can send `Authorization: Bearer <token>`. px0 serves plain HTTP: use a VPN or a TLS-terminating proxy on networks you do not trust.
+
 ---
 
 ## CLI Flag Reference
@@ -77,6 +93,9 @@ px0 -base-path /rev-123/ -host 0.0.0.0 -port 7777 ~/workspace
 | `-base-path P` | `"/"` | Base URL path prefix to serve endpoints and assets from (e.g. `/rev-123/`). Also configurable in settings via `server.basePath`. |
 | `-port N` | `7777` | Port to listen on (`0` picks an ephemeral free port) |
 | `-host H` | `127.0.0.1` | Network address to bind |
+| `-token T` | `$PX0_TOKEN` | Access token (16+ characters) required on every request. A random one is generated on non-loopback binds when unset |
+| `-no-auth` | `false` | No access token on a non-loopback bind. Only behind a gateway that authenticates users |
+| `-allowed-hosts H,…` | `$PX0_ALLOWED_HOSTS` | Extra `Host` names to accept besides `localhost` and IPs (`*.example.com` for subdomains, `*` for any) |
 | `-no-open` | `false` | Suppress automatic browser launch (ideal for servers) |
 | `-no-lsp` | `false` | Disable Language Server discovery |
 | `-no-git` | `false` | Disable Git status checks and diff viewing |

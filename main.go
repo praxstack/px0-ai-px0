@@ -47,6 +47,9 @@ func main() {
 		_            = flag.Bool("y", false, "answer yes to prompts (deprecated; PRs are always opened without prompt)")
 		_            = flag.Bool("yes", false, "answer yes to prompts (alias for -y)")
 		basePathFlag = flag.String("base-path", "", "base URL path prefix to serve endpoints and assets from (e.g. /rev-123/)")
+		tokenFlag    = flag.String("token", "", "access token required on every request, at least 16 characters (default $PX0_TOKEN; a random one is generated on non-loopback binds when unset)")
+		noAuth       = flag.Bool("no-auth", false, "do not require an access token on a non-loopback bind; only for use behind a gateway that authenticates users")
+		allowedHosts = flag.String("allowed-hosts", "", "comma-separated Host names to accept besides localhost and IP addresses, e.g. a reverse proxy or tunnel hostname; *.example.com matches subdomains, * accepts any (default $PX0_ALLOWED_HOSTS)")
 	)
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "px0 %s - a code navigator\n\nusage:\n  px0 [flags] [file or directory]\n  px0 [flags] <pr-url>\n\nflags:\n", version)
@@ -156,7 +159,22 @@ func main() {
 
 	pxSrv := NewServer(ix, lsp, configuredBasePath)
 	pxSrv.tel = tel
-	accessToken := pxSrv.Secure(*host)
+	access := AccessConfig{BindHost: *host, Token: *tokenFlag, NoAuth: *noAuth}
+	if access.Token == "" {
+		access.Token = os.Getenv("PX0_TOKEN")
+	}
+	if *allowedHosts != "" {
+		access.AllowedHosts = parseAllowedHosts(*allowedHosts)
+	} else {
+		access.AllowedHosts = parseAllowedHosts(os.Getenv("PX0_ALLOWED_HOSTS"))
+	}
+	if _, p, err := net.SplitHostPort(addr); err == nil {
+		access.Port, _ = strconv.Atoi(p)
+	}
+	accessToken, err := pxSrv.Secure(access)
+	if err != nil {
+		fatal(err)
+	}
 	if pr != nil {
 		pxSrv.SetPR(pr)
 	}
@@ -190,6 +208,11 @@ func main() {
 		for _, networkURL := range networkURLs(addr, initialFile, initialLine) {
 			uiKV("network", uiAccent(withToken(networkURL, accessToken), os.Stdout), 11, os.Stdout)
 		}
+	}
+	if accessToken != "" {
+		uiKV("token", accessToken+uiDim("  (add ?token=… to any URL that reaches this px0)", os.Stdout), 11, os.Stdout)
+	} else if *noAuth && !isLoopbackBind(*host) {
+		uiKV("access", paint("no access token (-no-auth): anyone who can reach this port can read the workspace", colorWarn, true, os.Stdout), 11, os.Stdout)
 	}
 	uiHint("ctrl-c to stop", os.Stdout)
 
