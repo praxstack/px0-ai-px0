@@ -128,7 +128,7 @@ func TestSymlinkedSettingsWrittenThrough(t *testing.T) {
 }
 
 // The raw editor masks the token of an unparsable settings.json with
-// githubTokenRe; saving the repaired text with the mask echoed back must keep
+// maskGitHubTokens; saving the repaired text with the mask echoed back must keep
 // the stored token, not drop it because the old file did not parse.
 func TestRawRepairOfInvalidSettingsKeepsMaskedToken(t *testing.T) {
 	dir := t.TempDir()
@@ -153,5 +153,33 @@ func TestRawRepairOfInvalidSettingsKeepsMaskedToken(t *testing.T) {
 	os.WriteFile(p, []byte(`{"github.token": 5, "editor.tabSize": 2,}`), 0o600)
 	if err := saveRawSettingsJSON([]byte(`{"github.token":"` + maskedSecret + `"}`)); err == nil {
 		t.Fatal("masked save over an unrecoverable token: want error")
+	}
+}
+
+// A malformed settings.json can spell the key with JSON escapes; the raw view
+// must still mask the token, and a repair that echoes the mask keeps it.
+func TestRawViewMasksEscapedTokenKey(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	p := settingsPath()
+	os.MkdirAll(filepath.Dir(p), 0o700)
+	esc := func(hex string) string { return string(rune(92)) + "u00" + hex } // a JSON \u00XX escape
+	key := "github" + esc("2e") + esc("74") + "oken"                         // decodes to github.token
+	val := "ghp_esc" + esc("61") + "ped"                                     // decodes to ghp_escaped
+	os.WriteFile(p, []byte(`{"note": "github.token", "`+key+`": "`+val+`", "editor.tabSize": 2,}`), 0o600)
+
+	shown := readRawSettingsJSON()
+	if strings.Contains(shown, "ghp_esc") || !strings.Contains(shown, maskedSecret) {
+		t.Fatalf("raw view did not mask the escaped-key token: %q", shown)
+	}
+	if !strings.Contains(shown, `"note": "github.token"`) {
+		t.Fatalf("raw view masked a value that is not the token: %q", shown)
+	}
+	fixed := strings.Replace(shown, ",}", "}", 1)
+	if err := saveRawSettingsJSON([]byte(fixed)); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSettingsRawMap()["github.token"]; got != "ghp_escaped" {
+		t.Fatalf("github.token after repair = %v, want the stored token", got)
 	}
 }

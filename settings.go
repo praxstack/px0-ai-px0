@@ -497,11 +497,40 @@ func readSettingsLocked() settings {
 // Writing it back leaves the stored secret untouched.
 const maskedSecret = "********"
 
-var githubTokenRe = regexp.MustCompile(`("github\.token"\s*:\s*)("(?:[^"\\]|\\.)*")`)
+// jsonStringPairRe matches a "key": "string" pair in JSON text. It is used on a
+// settings.json that does not parse, so it cannot rely on a decoder.
+var jsonStringPairRe = regexp.MustCompile(`("(?:[^"\\]|\\.)*")\s*:\s*("(?:[^"\\]|\\.)*")`)
+
+// githubTokenSpans returns the byte spans of the quoted string values in data
+// whose key decodes to github.token, however the key is escaped.
+func githubTokenSpans(data []byte) [][2]int {
+	var out [][2]int
+	for _, m := range jsonStringPairRe.FindAllSubmatchIndex(data, -1) {
+		var k string
+		if json.Unmarshal(data[m[2]:m[3]], &k) == nil && k == "github.token" {
+			out = append(out, [2]int{m[4], m[5]})
+		}
+	}
+	return out
+}
+
+// maskGitHubTokens replaces every github.token string value in data, which
+// need not be valid JSON, with maskedSecret.
+func maskGitHubTokens(data []byte) string {
+	var b bytes.Buffer
+	last := 0
+	for _, sp := range githubTokenSpans(data) {
+		b.Write(data[last:sp[0]])
+		b.WriteString(`"` + maskedSecret + `"`)
+		last = sp[1]
+	}
+	b.Write(data[last:])
+	return b.String()
+}
 
 // storedGitHubToken returns the github.token in settings.json for a save that
 // echoed maskedSecret back. A file that does not parse is the raw editor's
-// repair case: its token was masked with githubTokenRe, so it is recovered the
+// repair case: its token was masked with maskGitHubTokens, so it is recovered the
 // same way. When that is not possible (no unique string value) it is an error
 // rather than a silent loss of the token.
 func storedGitHubToken() (tok any, ok bool, err error) {
@@ -515,9 +544,9 @@ func storedGitHubToken() (tok any, ok bool, err error) {
 		return nil, false, rerr
 	}
 	values := map[string]bool{}
-	for _, mm := range githubTokenRe.FindAllSubmatch(data, -1) {
+	for _, sp := range githubTokenSpans(data) {
 		var v string
-		if json.Unmarshal(mm[2], &v) != nil {
+		if json.Unmarshal(data[sp[0]:sp[1]], &v) != nil {
 			values = nil
 			break
 		}
@@ -606,7 +635,7 @@ func readRawSettingsJSON() string {
 	// Pretty format if possible
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return githubTokenRe.ReplaceAllString(string(data), `$1"`+maskedSecret+`"`)
+		return maskGitHubTokens(data)
 	} else {
 		if t, ok := raw["github.token"].(string); ok && t != "" {
 			raw["github.token"] = maskedSecret
@@ -615,7 +644,7 @@ func readRawSettingsJSON() string {
 			return string(formatted) + "\n"
 		}
 	}
-	return githubTokenRe.ReplaceAllString(string(data), `$1"`+maskedSecret+`"`)
+	return maskGitHubTokens(data)
 }
 
 // writeSettings saves the agent and models choices while preserving other settings.
