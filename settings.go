@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -402,6 +404,34 @@ func readSettingsRawMap() map[string]any {
 	return m
 }
 
+// readSettingsRawMapStrict is the read used before a write: a missing or empty
+// file is an empty map, but a file that exists and does not parse is an error,
+// so a typo in settings.json is never silently replaced by defaults.
+func readSettingsRawMapStrict() (map[string]any, error) {
+	p := settingsPath()
+	if p == "" {
+		return map[string]any{}, nil
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return map[string]any{}, nil
+		}
+		return nil, err
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return map[string]any{}, nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("%s is not valid JSON (fix or remove it; not overwriting): %w", p, err)
+	}
+	if m == nil {
+		m = map[string]any{}
+	}
+	return m, nil
+}
+
 // readSettings never fails: a missing or corrupt file simply means no choice
 // has been made yet, which is the same as a fresh install.
 func readSettings() settings {
@@ -563,7 +593,10 @@ func writeSettings(s settings) error {
 	settingsMu.Lock()
 	defer settingsMu.Unlock()
 
-	raw := readSettingsRawMap()
+	raw, err := readSettingsRawMapStrict()
+	if err != nil {
+		return err
+	}
 	if s.Agent != "" {
 		raw["agent"] = s.Agent
 		raw["agent.harness"] = s.Agent
@@ -592,7 +625,10 @@ func updateSettingsMap(updates map[string]any) error {
 	settingsMu.Lock()
 	defer settingsMu.Unlock()
 
-	raw := readSettingsRawMap()
+	raw, err := readSettingsRawMapStrict()
+	if err != nil {
+		return err
+	}
 	for k, v := range updates {
 		if k == "github.token" && v == maskedSecret {
 			continue // the browser echoed the mask back: keep the stored token
@@ -700,13 +736,60 @@ func saveRawSettingsJSON(rawJSON []byte) error {
 	return writeRawMapLocked(p, m)
 }
 
+// writeRawMapLocked replaces settings.json atomically (temp file in the same
+// directory, then rename) with mode 0600 in a 0700 directory, because the file
+// can hold a GitHub token. The previous contents are kept as settings.json.bak.
 func writeRawMapLocked(p string, raw map[string]any) error {
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+	dir := filepath.Dir(p)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(raw, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p, append(data, '\n'), 0o644)
+	return writeFileAtomic(p, append(data, '\n'), true)
+}
+
+// writeFileAtomic writes data to p via a temp file and rename, with mode 0600.
+// When backup is set, a non-empty existing file is first copied to p+".bak".
+func writeFileAtomic(p string, data []byte, backup bool) error {
+	if backup {
+		if old, err := os.ReadFile(p); err == nil && len(bytes.TrimSpace(old)) > 0 {
+			if err := os.WriteFile(p+".bak", old, 0o600); err != nil {
+				return err
+			}
+			_ = os.Chmod(p+".bak", 0o600)
+		}
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(p), filepath.Base(p)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	cleanup := func() { _ = os.Remove(tmpName) }
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		cleanup()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := os.Rename(tmpName, p); err != nil {
+		cleanup()
+		return err
+	}
+	return nil
 }
