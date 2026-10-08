@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -172,12 +173,43 @@ func TestTokenCookieScopedToBasePath(t *testing.T) {
 func TestTokenStrippedFromNavigationURL(t *testing.T) {
 	s, _ := newTestServer(t)
 	tok := mustSecure(t, s, AccessConfig{BindHost: "0.0.0.0", Port: 7777})
-	rec := doReq(s, "GET", "/?path=main.go&token="+tok, "10.0.0.5:7777", map[string]string{"Sec-Fetch-Mode": "navigate"}, "")
-	if rec.Code != http.StatusFound {
-		t.Fatalf("navigation with token: got %d, want 302", rec.Code)
+	rec := doReq(s, "GET", "/?path=main.go&token="+tok, "10.0.0.5:7777", map[string]string{"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Site": "cross-site"}, "")
+	// Not a 302: a redirect belongs to the incoming (possibly cross-site)
+	// navigation, which may not carry the new SameSite=Strict cookie. A
+	// same-origin page that replaces the URL itself starts a same-site one.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("navigation with token: got %d, want 200 landing page", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); loc != "./?path=main.go" {
-		t.Errorf("Location = %q, want %q", loc, "./?path=main.go")
+	if loc := rec.Header().Get("Location"); loc != "" {
+		t.Errorf("landing page must not redirect, Location = %q", loc)
+	}
+	h := rec.Header()
+	if ct := h.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want text/html", ct)
+	}
+	if h.Get("Cache-Control") != "no-store" || h.Get("Referrer-Policy") != "no-referrer" {
+		t.Errorf("landing page headers: Cache-Control=%q Referrer-Policy=%q", h.Get("Cache-Control"), h.Get("Referrer-Policy"))
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, tok) {
+		t.Errorf("landing page body contains the token: %s", body)
+	}
+	if !strings.Contains(body, `location.replace("./?path=main.go")`) {
+		t.Errorf("landing page does not replace the URL with the token-free one: %s", body)
+	}
+	if !strings.Contains(body, `href="./?path=main.go"`) {
+		t.Errorf("landing page has no no-script fallback link: %s", body)
+	}
+	csp := h.Get("Content-Security-Policy")
+	m := regexp.MustCompile(`script-src 'nonce-([A-Za-z0-9+/=_-]{16,})'`).FindStringSubmatch(csp)
+	if m == nil || strings.Contains(csp, "unsafe-inline") || !strings.Contains(csp, "default-src 'none'") {
+		t.Fatalf("landing page CSP = %q, want default-src 'none' and a script nonce", csp)
+	}
+	if !strings.Contains(body, `<script nonce="`+m[1]+`">`) {
+		t.Errorf("script nonce does not match the CSP nonce %q: %s", m[1], body)
+	}
+	if again := doReq(s, "GET", "/?token="+tok, "10.0.0.5:7777", map[string]string{"Sec-Fetch-Mode": "navigate"}, ""); strings.Contains(again.Header().Get("Content-Security-Policy"), m[1]) {
+		t.Error("landing page nonce is reused across responses")
 	}
 	for in, want := range map[string]string{
 		"/rev-1/?token=x":         "./",
@@ -189,8 +221,11 @@ func TestTokenStrippedFromNavigationURL(t *testing.T) {
 			t.Errorf("locationWithoutToken(%q) = %q, want %q", in, got, want)
 		}
 	}
-	if c := rec.Result().Cookies(); len(c) != 1 || c[0].Value != tok {
-		t.Errorf("redirect must set the token cookie, got %v", c)
+	if c := rec.Result().Cookies(); len(c) != 1 || c[0].Value != tok || c[0].SameSite != http.SameSiteStrictMode || !c[0].HttpOnly {
+		t.Errorf("landing page must set the HttpOnly SameSite=Strict token cookie, got %v", c)
+	}
+	if again := doReq(s, "GET", "/a.go?token="+tok+"&l=3", "10.0.0.5:7777", map[string]string{"Sec-Fetch-Mode": "navigate"}, ""); !strings.Contains(again.Body.String(), `location.replace("./a.go?l=3")`) {
+		t.Errorf("landing page for a file URL: %s", again.Body.String())
 	}
 	// Non-navigation requests (scripts, curl) are served directly.
 	if rec := doReq(s, "GET", "/api/meta?token="+tok, "10.0.0.5:7777", nil, ""); rec.Code != http.StatusOK {

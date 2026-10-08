@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"net"
 	"net/http"
 	"net/url"
@@ -219,6 +221,27 @@ func locationWithoutToken(u *url.URL) string {
 	return loc
 }
 
+// writeTokenLanding answers a browser navigation that carried ?token= (the
+// caller has already set the cookie) with a page that swaps the address for
+// loc, the token-free URL. It is not a 302 on purpose: a redirect is part of
+// the navigation that brought the token, and when that came from another site
+// browsers may leave the new SameSite=Strict cookie off the redirected request.
+// A navigation started by this same-origin page is same-site, so the cookie is
+// sent and Strict keeps its CSRF protection. location.replace also removes the
+// token URL from history. The body never contains the token.
+func writeTokenLanding(w http.ResponseWriter, loc string) {
+	nonce := newAccessToken()
+	js, _ := json.Marshal(loc) // escapes <, > and &, so it cannot close the script
+	h := w.Header()
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	h.Set("Cache-Control", "no-store")
+	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("Content-Security-Policy", "default-src 'none'; script-src 'nonce-"+nonce+"'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, `<!doctype html><meta charset="utf-8"><title>px0</title><script nonce="%s">location.replace(%s)</script><noscript><a href="%s">Continue to px0</a></noscript>`+"\n",
+		nonce, js, html.EscapeString(loc))
+}
+
 // redactTokenURI hides a ?token= value in a request URI before it is logged.
 func redactTokenURI(uri string) string {
 	u, err := url.ParseRequestURI(uri)
@@ -251,8 +274,7 @@ func (s *Server) guard(w http.ResponseWriter, r *http.Request) (*http.Request, b
 			// A browser navigation now has the cookie: drop the token from the
 			// address bar so it does not linger in history or copied links.
 			if r.Method == http.MethodGet && r.Header.Get("Sec-Fetch-Mode") == "navigate" {
-				w.Header().Set("Location", locationWithoutToken(r.URL))
-				w.WriteHeader(http.StatusFound)
+				writeTokenLanding(w, locationWithoutToken(r.URL))
 				return r, false
 			}
 		}
