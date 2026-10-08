@@ -244,12 +244,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != metricsPath && !isSSE {
 		s.lastReq.Store(time.Now().UnixNano())
 	}
-	r, ok := s.guard(w, r)
-	if !ok {
-		return
-	}
 	start := time.Now()
 
+	// The recorder and request log come before guard so that requests guard
+	// answers itself (401, 403, token landing, base redirects) are logged too.
 	rec := &statusRecorder{ResponseWriter: w}
 	if uiVerbose {
 		defer func() {
@@ -276,6 +274,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			uiStatus(role, "http", fmt.Sprintf("%s %s · %d  (%s)", r.Method, redactTokenURI(uri), status, dur), 0, os.Stdout)
 		}()
+	}
+
+	r, ok := s.guard(rec, r)
+	if !ok {
+		return
 	}
 
 	var out http.ResponseWriter = rec
