@@ -177,10 +177,11 @@ func (s *Server) tokenCookieName() string {
 
 // tokenCookie is the access-token cookie set after a ?token= request. Its Path
 // is the configured base path: browsers do not isolate cookies by port, so the
-// per-port name only avoids collisions between instances; the Path is what
-// keeps the token away from other apps under the same hostname (the trailing
-// slash keeps /rev-1/ from matching /rev-10/). A px0 served at "/" shares the
-// whole hostname, so give it a hostname of its own when other apps run there.
+// per-port name only avoids collisions between instances; the Path keeps the
+// cookie off requests to other apps' paths (the trailing slash keeps /rev-1/
+// from matching /rev-10/). Path is not a security boundary: any page on the
+// same origin can request px0's paths and the browser attaches this cookie, so
+// instances that must be isolated from other apps need their own hostname.
 func (s *Server) tokenCookie() *http.Cookie {
 	return &http.Cookie{
 		Name:     s.tokenCookieName(),
