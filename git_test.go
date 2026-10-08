@@ -1857,3 +1857,39 @@ func TestRemoteHostPath(t *testing.T) {
 		}
 	}
 }
+
+// px0 polls git status in the background while the user works in the same
+// repository. By default git status takes .git/index.lock on every run to
+// refresh the index, and the user's own `git commit` then fails with
+// "index.lock: File exists" (this is what made
+// TestHandleDiffPRSplitsPRAndYourChanges flaky). px0's status polls must leave
+// the index alone.
+func TestGitStatusDoesNotWriteIndex(t *testing.T) {
+	if !gitInstalled() {
+		t.Skip("git not installed")
+	}
+	root := gitRepo(t)
+	// Same content, new mtime: the index's stat data is stale, so a status
+	// that is allowed to take optional locks rewrites the index.
+	keep := filepath.Join(root, "keep.go")
+	later := time.Now().Add(time.Hour)
+	if err := os.Chtimes(keep, later, later); err != nil {
+		t.Fatal(err)
+	}
+	idx := filepath.Join(root, ".git", "index")
+	before, err := os.ReadFile(idx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := gitStatusAgainst(root, "HEAD")
+	if st == nil {
+		t.Fatal("git status failed")
+	}
+	if _, ok := st["keep.go"]; ok {
+		t.Errorf("keep.go has only a new mtime but is reported as %q", st["keep.go"])
+	}
+	after, _ := os.ReadFile(idx)
+	if !bytes.Equal(before, after) {
+		t.Fatal("px0's git status rewrote .git/index (it took index.lock)")
+	}
+}
