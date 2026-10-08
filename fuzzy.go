@@ -97,7 +97,7 @@ func min(a, b int) int {
 // FuzzyFind ranks every indexed path against query and returns the best limit.
 func FuzzyFind(files []FileEntry, query string, limit int) []FuzzyResult {
 	origQ := strings.ReplaceAll(strings.TrimSpace(query), " ", "")
-	q := strings.ToLower(origQ)
+	q := asciiLowerString(origQ)
 
 	if q == "" {
 		out := make([]FuzzyResult, 0, limit)

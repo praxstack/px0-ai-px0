@@ -408,7 +408,7 @@ func (ix *Index) Build() {
 			mu.Lock()
 			files = append(files, FileEntry{
 				Path: childRel, Name: name, Size: info.Size(),
-				lower: strings.ToLower(childRel), nameStart: len(childRel) - len(name),
+				lower: asciiLowerString(childRel), nameStart: len(childRel) - len(name),
 			})
 			mu.Unlock()
 		}
