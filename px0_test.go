@@ -1366,3 +1366,77 @@ func TestContentSecurityPolicyHeader(t *testing.T) {
 
 
 
+
+func TestVerboseLogsGuardedRequests(t *testing.T) {
+	origVerbose, origQuiet := uiVerbose, uiQuiet
+	defer func() { uiVerbose, uiQuiet = origVerbose, origQuiet }()
+	uiVerbose, uiQuiet = true, false
+
+	s, _ := newTestServer(t)
+	tok := mustSecure(t, s, AccessConfig{BindHost: "0.0.0.0", Port: 7777})
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe() failed: %v", err)
+	}
+	origStdout := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = origStdout }()
+
+	for _, tc := range []struct {
+		path string
+		hdr  map[string]string
+		want int
+	}{
+		{"/api/meta", nil, http.StatusUnauthorized},
+		{"/?token=" + tok, map[string]string{"Sec-Fetch-Mode": "navigate"}, http.StatusOK},
+	} {
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		req.Host = "10.0.0.5:7777"
+		for k, v := range tc.hdr {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		s.ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Fatalf("GET %s: got %d, want %d", tc.path, rec.Code, tc.want)
+		}
+	}
+
+	w.Close()
+	out, _ := io.ReadAll(r)
+	r.Close()
+	log := string(out)
+	if !strings.Contains(log, "GET /api/meta · 401") {
+		t.Errorf("rejected request missing from the verbose log:\n%s", log)
+	}
+	if !strings.Contains(log, "GET /?token=REDACTED · 200") {
+		t.Errorf("token landing request missing from the verbose log:\n%s", log)
+	}
+	if strings.Contains(log, tok) {
+		t.Errorf("verbose log contains the access token:\n%s", log)
+	}
+}
+
+func TestQuietStillPrintsGeneratedToken(t *testing.T) {
+	origQuiet := uiQuiet
+	defer func() { uiQuiet = origQuiet }()
+
+	var buf bytes.Buffer
+	uiQuiet = true
+	printAccess(&buf, testToken, true, false, "0.0.0.0")
+	if !strings.Contains(buf.String(), testToken) {
+		t.Errorf("-quiet hid the generated access token, output %q", buf.String())
+	}
+	buf.Reset()
+	printAccess(&buf, testToken, false, false, "0.0.0.0")
+	if buf.Len() != 0 {
+		t.Errorf("-quiet printed a token the operator supplied: %q", buf.String())
+	}
+	uiQuiet = false
+	buf.Reset()
+	printAccess(&buf, testToken, false, false, "0.0.0.0")
+	if !strings.Contains(buf.String(), testToken) {
+		t.Errorf("supplied token not printed without -quiet, output %q", buf.String())
+	}
+}

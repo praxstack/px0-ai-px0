@@ -67,6 +67,11 @@ type Server struct {
 	basePath   string
 	session    *sessionManager
 
+	accessToken  string   // when non-empty, required on every request (see Secure)
+	hostGuard    bool     // reject requests whose Host is not localhost, an IP or an allowed host (DNS rebinding)
+	allowedHosts []string // extra Host names accepted by hostGuard (-allowed-hosts)
+	cookieName   string   // access-token cookie name; per port to avoid collisions, Path (the base path) does the scoping
+
 	lastReq atomic.Int64 // unix nanos of the most recent request
 }
 
@@ -241,6 +246,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	start := time.Now()
 
+	// The recorder and request log come before guard so that requests guard
+	// answers itself (401, 403, token landing, base redirects) are logged too.
 	rec := &statusRecorder{ResponseWriter: w}
 	if uiVerbose {
 		defer func() {
@@ -265,8 +272,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if uri == "" {
 				uri = "/"
 			}
-			uiStatus(role, "http", fmt.Sprintf("%s %s · %d  (%s)", r.Method, uri, status, dur), 0, os.Stdout)
+			uiStatus(role, "http", fmt.Sprintf("%s %s · %d  (%s)", r.Method, redactTokenURI(uri), status, dur), 0, os.Stdout)
 		}()
+	}
+
+	r, ok := s.guard(rec, r)
+	if !ok {
+		return
 	}
 
 	var out http.ResponseWriter = rec
@@ -1991,7 +2003,8 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		} else {
 			payload = make(map[string]any)
 			for k, vs := range r.URL.Query() {
-				if len(vs) > 0 {
+				// token is the access credential, never a setting.
+				if len(vs) > 0 && k != "token" {
 					payload[k] = vs[0]
 				}
 			}

@@ -116,9 +116,9 @@ func (sm *sessionManager) Update(fn func(*WorkspaceSession)) WorkspaceSession {
 	defer sm.mu.Unlock()
 	fn(&sm.data)
 	if sm.path != "" {
-		if err := os.MkdirAll(filepath.Dir(sm.path), 0o755); err == nil {
+		if err := os.MkdirAll(filepath.Dir(sm.path), 0o700); err == nil {
 			if b, err := json.MarshalIndent(sm.data, "", "  "); err == nil {
-				_ = os.WriteFile(sm.path, append(b, '\n'), 0o644)
+				_ = writeFileAtomic(symlinkTarget(sm.path), append(b, '\n'), "")
 			}
 		}
 	}

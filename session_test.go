@@ -125,3 +125,37 @@ func TestPRDraftSessionPersistence(t *testing.T) {
 		t.Errorf("unexpected restored comment: %+v", pr2.comments[0])
 	}
 }
+
+// A session file that is a symlink is updated through the link, as the
+// earlier os.WriteFile did, whether or not its target exists yet.
+func TestSymlinkedSessionFileWrittenThrough(t *testing.T) {
+	for _, existing := range []bool{true, false} {
+		t.Setenv("XDG_STATE_HOME", t.TempDir())
+		root := t.TempDir()
+		p := sessionFilePath("/", root)
+		if p == "" {
+			t.Skip("no session path")
+		}
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		target := filepath.Join(t.TempDir(), "session.json")
+		if existing {
+			if err := os.WriteFile(target, []byte(`{"tabs":[],"openDirs":[]}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Symlink(target, p); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		sm := newSessionManager("/", root)
+		sm.Update(func(s *WorkspaceSession) { s.OpenDirs = []string{"pkg"} })
+		if fi, err := os.Lstat(p); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("existing=%v: session symlink was replaced (err=%v)", existing, err)
+		}
+		data, err := os.ReadFile(target)
+		if err != nil || !bytes.Contains(data, []byte(`"pkg"`)) {
+			t.Fatalf("existing=%v: link target not updated: %s (err=%v)", existing, data, err)
+		}
+	}
+}
